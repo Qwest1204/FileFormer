@@ -12,6 +12,9 @@ matplotlib = "^3.10.3"
 polars = "^1.29.0"
 notebook = "^7.4.2"
 pandas = "^2.2.3"
+torchvision = "^0.22.0"
+torchaudio = "^2.7.0"
+torchinfo = "^1.8.0"
 
 
 [build-system]
