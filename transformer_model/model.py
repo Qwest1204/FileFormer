@@ -228,7 +228,7 @@ class Transformer(nn.Module):
         # (batch, seq_len, d_model)
         src = self.src_embed(src)
         src = self.src_pos(src)
-        return self.encoder(src, src_mask)
+        return self.encoder(src,  )
 
     def decode(self, encoder_output: torch.Tensor, src_mask: torch.Tensor, tgt: torch.Tensor, tgt_mask: torch.Tensor):
         # (batch, seq_len, d_model)
@@ -240,6 +240,27 @@ class Transformer(nn.Module):
         # (batch, seq_len, vocab_size)
         return self.projection_layer(x)
 
+
+class TransformerEncoderModel(nn.Module):
+    def __init__(self, d_model, layers, heads, d_ff, dropout, vocab_size, seq_len):
+        super().__init__()
+        self.embedding = InputEmbeddings(d_model, vocab_size)
+        self.position_enc = PositionalEncoding(d_model, seq_len, dropout)
+
+        encoder_blocks = []
+        for _ in range(layers):
+            encoder_self_attention_block = MultiHeadAttentionBlock(d_model, heads, dropout)
+            feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
+            encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
+            encoder_blocks.append(encoder_block)
+
+        self.encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
+
+    def forward(self, x, mask):
+        x = self.embedding(x)
+        x = self.position_enc(x.unsqueeze(0))
+        x = self.encoder(x, mask)
+        return x
 
 def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int = 512,
                       N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:
