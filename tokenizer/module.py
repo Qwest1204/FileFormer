@@ -1,16 +1,10 @@
-def read_hex_chunks(file_path, chunk_size=2, buffer_size=4096):
-    with open(file_path, 'rb') as f:
-        while True:
-            data = f.read(buffer_size)
-            if not data:
-                break
-            for i in range(0, len(data), chunk_size):
-                chunk = data[i:i + chunk_size]
-                yield chunk.hex()
-
+def read_hex_chunks(data, chunk_size=2):
+    for i in range(0, len(data), chunk_size):
+        chunk = data[i:i + chunk_size]
+        yield chunk.hex().zfill(4)  # Гарантирует 4 символа
 
 class Tokenizer:
-    def __init__(self,):
+    def __init__(self):
         self.vocab = {}
         enc = {'<SOF>': 0, '<EOF>': 1, '<UNK>': 2, '<SOS>': 3, '<EOS>': 4, '<PAD>': 5}
         dec = {0: '<SOF>', 1: '<EOF>', 2: '<UNK>', 3: '<SOS>', 4: '<EOS>', 5: '<PAD>'}
@@ -21,16 +15,20 @@ class Tokenizer:
         self.vocab["enc"] = enc
         self.vocab["dec"] = dec
 
-    def encode(self, file):
-        tokens = []
-        for chunk in read_hex_chunks(file):
-            tokens.append(self.vocab['enc'][chunk])
+    def encode(self, bin_data):
+        tokens = [self.vocab['enc']['<SOF>']]
+        for chunk in read_hex_chunks(bin_data):
+            tokens.append(self.vocab['enc'].get(chunk, self.vocab['enc']['<UNK>']))
+        tokens.append(self.vocab['enc']['<EOF>'])
         return tokens
 
     def decode(self, tokens):
         data = []
         for token in tokens:
+            if token in [0, 1, 3, 4, 5]:
+                continue  # Пропуск служебных токенов
             data.append(self.vocab['dec'][token])
+        return bytes.fromhex(''.join(data))
 
     def get_idx_from_token(self, token):
         return self.vocab['enc'][token]
