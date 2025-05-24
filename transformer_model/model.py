@@ -168,6 +168,29 @@ class Encoder(nn.Module):
         return self.norm(x)
 
 
+class EncoderCompress(nn.Module):
+    def __init__(self, features: int, layers: nn.ModuleList, compress_factor: int = 2) -> None:
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalization(features)
+        self.compress_factor = compress_factor
+        self.compress = nn.Linear(features * compress_factor, features)
+
+    def forward(self, x, mask):
+        # Применяем слои энкодера
+        for layer in self.layers:
+            x = layer(x, mask)
+
+        # Нормализация
+        x = self.norm(x)
+
+        # Проверка и добавление паддинга
+        batch, seq_len, d_model = x.shape
+        # Сжатие последовательности
+        x = x.view(batch, seq_len // self.compress_factor, d_model * self.compress_factor)
+        x = self.compress(x)  # (batch, new_seq_len, d_model)
+        return x
+
 class DecoderBlock(nn.Module):
 
     def __init__(self, features: int, self_attention_block: MultiHeadAttentionBlock,
@@ -200,6 +223,34 @@ class Decoder(nn.Module):
         return self.norm(x)
 
 
+class DecoderExpand(nn.Module):
+    def __init__(self, features: int, layers: nn.ModuleList, expand_factor: int = 2) -> None:
+        super().__init__()
+        self.layers = layers
+        self.norm = LayerNormalization(features)
+        self.expand_factor = expand_factor  # Сохраняем коэффициент расширения
+        self.expand = nn.Linear(features, features * expand_factor)  # Линейный слой для расширения
+
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        # Расширение последовательности
+        x = self.expand(x)  # (batch, seq_len, features * expand_factor)
+        batch, seq_len, d_model = x.shape
+
+        # Переформируем тензор с учетом expand_factor
+        # Новые размеры: (batch, seq_len * expand_factor, d_model // expand_factor)
+        x = x.view(
+            batch,
+            seq_len * self.expand_factor,
+            d_model // self.expand_factor
+        )
+
+        # Применяем слои декодера
+        for layer in self.layers:
+            x = layer(x, encoder_output, src_mask, tgt_mask)
+
+        # Нормализация
+        return self.norm(x)
+
 class ProjectionLayer(nn.Module):
 
     def __init__(self, d_model, vocab_size) -> None:
@@ -213,92 +264,70 @@ class ProjectionLayer(nn.Module):
 
 class Transformer(nn.Module):
 
-    def __init__(self, encoder: Encoder, decoder: Decoder, src_embed: InputEmbeddings, tgt_embed: InputEmbeddings,
-                 src_pos: PositionalEncoding, tgt_pos: PositionalEncoding, projection_layer: ProjectionLayer) -> None:
+    def __init__(self, encoder: EncoderCompress, decoder: DecoderExpand, src_embed: InputEmbeddings,
+                 src_pos: PositionalEncoding, projection_layer: ProjectionLayer) -> None:
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.src_embed = src_embed
-        self.tgt_embed = tgt_embed
         self.src_pos = src_pos
-        self.tgt_pos = tgt_pos
         self.projection_layer = projection_layer
 
     def encode(self, src, src_mask):
         # (batch, seq_len, d_model)
         src = self.src_embed(src)
         src = self.src_pos(src)
-        return self.encoder(src,  )
+        return self.encoder(src, src_mask)
 
-    def decode(self, encoder_output: torch.Tensor, src_mask: torch.Tensor, tgt: torch.Tensor, tgt_mask: torch.Tensor):
+    def decode(self, encoder_output, src_mask):
         # (batch, seq_len, d_model)
-        tgt = self.tgt_embed(tgt)
-        tgt = self.tgt_pos(tgt)
-        return self.decoder(tgt, encoder_output, src_mask, tgt_mask)
+        return self.decoder(encoder_output, encoder_output, src_mask, None)
 
     def project(self, x):
         # (batch, seq_len, vocab_size)
         return self.projection_layer(x)
 
+    def forward(self, src, src_mask):
+        x = self.encode(src, src_mask)
+        x = self.decode(x, src_mask)
+        return self.project(x)
 
-class TransformerEncoderModel(nn.Module):
-    def __init__(self, d_model, layers, heads, d_ff, dropout, vocab_size, seq_len):
-        super().__init__()
-        self.embedding = InputEmbeddings(d_model, vocab_size)
-        self.position_enc = PositionalEncoding(d_model, seq_len, dropout)
 
-        encoder_blocks = []
-        for _ in range(layers):
-            encoder_self_attention_block = MultiHeadAttentionBlock(d_model, heads, dropout)
-            feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
-            encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
-            encoder_blocks.append(encoder_block)
-
-        self.encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
-
-    def forward(self, x, mask):
-        x = self.embedding(x)
-        x = self.position_enc(x.unsqueeze(0))
-        x = self.encoder(x, mask)
-        return x
-
-def build_transformer(src_vocab_size: int, tgt_vocab_size: int, src_seq_len: int, tgt_seq_len: int, d_model: int = 512,
-                      N: int = 6, h: int = 8, dropout: float = 0.1, d_ff: int = 2048) -> Transformer:
+def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: float, n_layers: int,
+                      n_heads: int, d_ff: int, factor: int) -> Transformer:
     # Create the embedding layers
-    src_embed = InputEmbeddings(d_model, src_vocab_size)
-    tgt_embed = InputEmbeddings(d_model, tgt_vocab_size)
+    src_embed = InputEmbeddings(d_model, vocab_size)
 
     # Create the positional encoding layers
-    src_pos = PositionalEncoding(d_model, src_seq_len, dropout)
-    tgt_pos = PositionalEncoding(d_model, tgt_seq_len, dropout)
+    src_pos = PositionalEncoding(d_model, max_seq_len, dropout)
 
     # Create the encoder blocks
     encoder_blocks = []
-    for _ in range(N):
-        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+    for _ in range(n_layers):
+        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, n_heads, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
         encoder_blocks.append(encoder_block)
 
     # Create the decoder blocks
     decoder_blocks = []
-    for _ in range(N):
-        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
-        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, h, dropout)
+    for _ in range(n_layers):
+        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, n_heads, dropout)
+        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, n_heads, dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         decoder_block = DecoderBlock(d_model, decoder_self_attention_block, decoder_cross_attention_block,
                                      feed_forward_block, dropout)
         decoder_blocks.append(decoder_block)
 
     # Create the encoder and decoder
-    encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
-    decoder = Decoder(d_model, nn.ModuleList(decoder_blocks))
+    encoder = EncoderCompress(d_model, nn.ModuleList(encoder_blocks), compress_factor=factor)
+    decoder = DecoderExpand(d_model, nn.ModuleList(decoder_blocks), expand_factor=factor)
 
     # Create the projection layer
-    projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
+    projection_layer = ProjectionLayer(d_model, vocab_size)
 
     # Create the transformer
-    transformer = Transformer(encoder, decoder, src_embed, tgt_embed, src_pos, tgt_pos, projection_layer)
+    transformer = Transformer(encoder, decoder, src_embed, src_pos, projection_layer)
 
     # Initialize the parameters
     for p in transformer.parameters():
