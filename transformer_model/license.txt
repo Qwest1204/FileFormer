@@ -1,0 +1,170 @@
+ПРОПРИЕТАРНАЯ ЛИЦЕНЗИЯ НА ИСПОЛЬЗОВАНИЕ ПРОГРАММНОГО ОБЕСПЕЧЕНИЯ
+
+Лицензиар (Правообладатель): Огородников Даниил Николаевич, 128bit@128bit.xyz.
+Лицензиат: -
+Дата вступления в силу: 25-05-2025.
+
+1. Авторские права и объект лицензии
+
+1.1. Объектом лицензии является следующий программный код:
+
+Исходные файлы: model.py, __init__.py, test.ipynb, train.ipynb.
+Скомпилированные (бинарные) версии, документация, связанные ресурсы.
+Любые производные работы, модификации или обновления, созданные на основе данного кода.
+1.2. Лицензиар сохраняет исключительные права на объект лицензии, включая:
+
+Право на распространение, публикацию, изменение и отзыв лицензии.
+Право на вознаграждение за коммерческое использование (если применимо).
+Право требовать указания авторства во всех производных продуктах.
+1.3. Любые изменения, внесённые Лицензиатом в код, автоматически становятся собственностью Лицензиара. Лицензиат обязан предоставить исходный текст модификаций по первому требованию.
+
+2. Условия использования
+
+2.1. Код может быть использован только в следующих целях:
+
+Для разработки и поддержки проектов:
+NOTUS, как интелектуальная система сжатия информации.
+2.2. Географические ограничения: Использование допустимо только на территории Российской Федерации (далее - РФ), Республики Беларусь.
+
+2.3. Технические ограничения:
+
+Код не может быть интегрирован в системы, связанные с военные технологии, криптоджекинг.
+Запрещено использование в проектах, нарушающих законы.
+3. Запреты
+
+3.1. Лицензиату запрещено:
+
+Передавать код третьим лицам, включая сотрудников, не указанных в настоящей лицензии.
+Публиковать код в открытом доступе (GitHub, GitLab и т.п.) без письменного согласия Лицензиара.
+Использовать код в проектах, конкурирующих с продуктами Лицензиара.
+Обращаться с кодом как с общественным достоянием (public domain) или открытым ПО (open-source).
+3.2. Защита от реверс-инжиниринга:
+
+Любые попытки декомпиляции, дизассемблирования или анализа работы кода без согласия Лицензиара считаются нарушением.
+4. Срок действия и прекращение
+
+4.1. Лицензия действует до 25-05-2030.
+
+4.2. Лицензиар вправе расторгнуть лицензию без предупреждения в случаях:
+
+Нарушения условий п.2-3.
+Попытки оспорить авторские права Лицензиара.
+Ликвидации или банкротства Лицензиата.
+4.3. При прекращении лицензии Лицензиат обязан:
+
+Уничтожить все копии кода и подтвердить это письменно.
+Прекратить использование в течение 3 рабочих дней.
+5. Гарантии и ответственность
+
+5.1. Код предоставляется "как есть" (AS IS). Лицензиар не гарантирует:
+
+Отсутствие ошибок или уязвимостей.
+Совместимость с конкретным ПО/железом.
+Непрерывную техническую поддержку.
+5.2. Лицензиат несёт полную ответственность за:
+
+Ущерб, вызванный использованием кода.
+Нарушение прав третьих лиц при интеграции кода.
+6. Конфиденциальность и аудит
+
+6.1. Лицензиат обязуется хранить код в тайне и защищать его от несанкционированного доступа.
+
+6.2. Лицензиар вправе провести аудит для проверки соблюдения условий. Лицензиат обязан предоставить доступ к системам и документации.
+
+7. Прочие условия
+
+7.1. Налоги и сборы: Все платежи (если есть) осуществляются с учётом налогов РФ.
+
+7.2. Форс-мажор: Стороны не несут ответственности за нарушения, вызванные обстоятельствами непреодолимой силы.
+
+7.3. Изменения лицензии: Лицензиар вправе вносить изменения, уведомив Лицензиата за 2 дней.
+
+7.4. Правоприменение: Споры разрешаются в суде РФ. Применимое право — законодательство РФ.
+
+128bit.inc®
+
+
+PROPRIETARY SOFTWARE LICENSE
+
+Ruler: Ogorodnikov Daniil Nikolaevich, 128bit@128bit.xyz .
+Licensee: -
+Effective date: 25-05-2025.
+
+1. Copyright and the object of the license
+
+1.1. The object of the license is the following program code:
+
+Additional links: model.py , __init__.py , test.ipynb, train.ipynb.
+Compiled (binary) versions, documentation, and related resources.
+Any derivative works, modifications, or updates created based on this code.
+1.2. The Licensor retains the exclusive rights to the object of the license, including:
+
+The right to distribute, publish, modify, and revoke the license.
+The right to remuneration for commercial use (if applicable).
+The right to require attribution in all derivative products.
+1.3. Any changes made by the Licensee to the code automatically become the property of the Licensor. The licensee is obliged to provide the source code of the modifications upon request.
+
+2. Terms of Use
+
+2.1. The Code can only be used for the following purposes:
+
+For the development and support of projects:
+NOTUS, as an intelligent information compression system.
+2.2. Geographical restrictions: Use is allowed only on the territory of the Russian Federation (hereinafter referred to as the Russian Federation) and the Republic of Belarus.
+
+2.3. Technical limitations:
+
+The code cannot be integrated into systems related to military technology, cryptojacking.
+It is forbidden to use it in projects that violate laws.
+3. Prohibitions
+
+3.1. The Licensee is prohibited from:
+
+Transfer the code to third parties, including employees not specified in this license.
+To publish the code in the public domain (GitHub, GitLab, etc.) without the written consent of the user.
+Use the code in projects that compete with the Licensor's products.
+Treat the code as public domain or open source.
+3.2. Protection against reverse engineering:
+
+Any attempts to decompile, disassemble, or analyze the code without the Licensor's consent are considered a violation.
+4. Period of validity and termination
+
+4.1. The license is valid until 25-05-2030.
+
+4.2. The Licensor has the right to terminate the license without warning in the following cases::
+
+Violations of clauses 2-3.
+Attempts to challenge the Licensor's copyright.
+Liquidation or bankruptcy of the Licensee.
+4.3. Upon termination of the license, the Licensee must:
+
+Destroy all copies of the code and confirm this in writing.
+Stop using it within 3 business days.
+5. Guarantees and liability
+
+5.1. The code is provided "AS IS" (AS IS). The Licensor does not guarantee:
+
+No bugs or vulnerabilities.
+Compatibility with specific software/hardware.
+Continuous technical support.
+5.2. The Licensee is solely responsible for:
+
+Damage caused by using the code.
+Violation of the rights of third parties during code integration.
+6. Confidentiality and audit
+
+6.1. The Licensee undertakes to keep the code confidential and protect it from unauthorized access.
+
+6.2. The Licensor has the right to conduct an audit to verify compliance with the terms. The licensee must provide access to the systems and documentation.
+
+7. Other conditions
+
+7.1. Taxes and fees: All payments (if any) are subject to taxes of the Russian Federation.
+
+7.2. Force Majeure: The Parties are not responsible for violations caused by force majeure circumstances.
+
+7.3. License changes: The Licensor has the right to make changes by notifying the Licensee 2 days in advance.
+
+7.4. Law enforcement: Disputes are resolved in the court of the Russian Federation. The applicable law is the legislation of the Russian Federation.
+
+128bit.inc®
