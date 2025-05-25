@@ -48,9 +48,8 @@ class FileDataset(Dataset):
 
                     # Для трансформера: input_ids и labels (сдвинутые на 1 токен)
                     data.append({
-                        'input_ids': torch.tensor(chunk[:-1]),
-                        'labels': torch.tensor(chunk[1:]),
-                        'attention_mask': torch.tensor(attention_mask[:-1])
+                        'input_ids': torch.tensor(chunk),
+                        'attention_mask': torch.tensor(attention_mask),
                     })
         return data
 
@@ -64,6 +63,5 @@ class FileDataset(Dataset):
     def collate_fn(batch):
         return {
             'input_ids': pad_sequence([item['input_ids'] for item in batch], batch_first=True),
-            'labels': pad_sequence([item['labels'] for item in batch], batch_first=True),
             'attention_mask': pad_sequence([item['attention_mask'] for item in batch], batch_first=True)
         }

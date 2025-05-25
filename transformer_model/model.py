@@ -281,6 +281,9 @@ class Transformer(nn.Module):
 
     def decode(self, encoder_output, src_mask):
         # (batch, seq_len, d_model)
+        ####KOLHOZ 2.0#######
+        src_mask = torch.ones((1, int(src_mask.size()[1]/2)))
+        ####KOLHOZ 2.0#######
         return self.decoder(encoder_output, encoder_output, src_mask, None)
 
     def project(self, x):
