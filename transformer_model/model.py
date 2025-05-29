@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import math
 
 
@@ -263,9 +264,9 @@ class ProjectionLayer(nn.Module):
 
 
 class Transformer(nn.Module):
-
-    def __init__(self, encoder: EncoderCompress, decoder: DecoderExpand, src_embed: InputEmbeddings,
-                 src_pos: PositionalEncoding, projection_layer: ProjectionLayer) -> None:
+    def __init__(self, encoder: EncoderCompress, decoder: DecoderExpand,
+                 src_embed: InputEmbeddings, src_pos: PositionalEncoding,
+                 projection_layer: ProjectionLayer) -> None:
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
@@ -274,20 +275,25 @@ class Transformer(nn.Module):
         self.projection_layer = projection_layer
 
     def encode(self, src, src_mask):
-        # (batch, seq_len, d_model)
         src = self.src_embed(src)
         src = self.src_pos(src)
         return self.encoder(src, src_mask)
 
     def decode(self, encoder_output, src_mask):
-        # (batch, seq_len, d_model)
-        ####KOLHOZ 2.0#######
-        src_mask = torch.ones((1, int(src_mask.size()[1]/2)))
-        ####KOLHOZ 2.0#######
+        # Адаптация маски для сжатого представления (предполагаем сжатие в 2 раза)
+        if src_mask is not None:
+            if src_mask.dim() == 3:  # (batch, 1, seq_len)
+                compressed_mask = F.max_pool1d(src_mask.float(), kernel_size=2, stride=2)
+                src_mask = compressed_mask.to(src_mask.dtype)
+            elif src_mask.dim() == 2:  # (batch, seq_len)
+                compressed_mask = F.max_pool1d(src_mask.unsqueeze(1).float(), kernel_size=2, stride=2)
+                src_mask = compressed_mask.squeeze(1).to(src_mask.dtype)
+            else:
+                raise RuntimeError(f"Unsupported src_mask dim: {src_mask.dim()}")
+
         return self.decoder(encoder_output, encoder_output, src_mask, None)
 
     def project(self, x):
-        # (batch, seq_len, vocab_size)
         return self.projection_layer(x)
 
     def forward(self, src, src_mask):
