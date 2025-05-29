@@ -1,5 +1,5 @@
 import unittest
-from model import *
+from transformer_model import build_transformer
 import torch
 
 class TestModel(unittest.TestCase):
