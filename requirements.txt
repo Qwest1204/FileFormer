@@ -53,6 +53,7 @@ httptools==0.6.4
 httpx==0.28.1
 idna==3.10
 importlib_metadata==8.6.1
+iniconfig==2.1.0
 ipykernel==6.29.5
 ipython==9.2.0
 ipython_pygments_lexers==1.1.1
@@ -116,6 +117,7 @@ parso==0.8.4
 pexpect==4.9.0
 pillow==11.2.1
 platformdirs==4.3.8
+pluggy==1.6.0
 polars==1.29.0
 prometheus_client==0.21.1
 prompt_toolkit==3.0.51
@@ -135,6 +137,7 @@ pydantic_core==2.33.2
 Pygments==2.19.1
 pyOpenSSL==25.1.0
 pyparsing==3.2.3
+pytest==8.3.5
 python-dateutil==2.9.0.post0
 python-dotenv==1.1.0
 python-json-logger==3.3.0
