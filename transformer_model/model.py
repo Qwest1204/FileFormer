@@ -184,7 +184,7 @@ class EncoderCompress(nn.Module):
                 stride=compress_factor,
                 padding=0  # Без паддинга для точного сжатия
             ),
-            nn.ReLU()
+            nn.GELU()
         )
         # Для остаточного соединения
         self.res_compress = nn.Linear(features*compress_factor, features)
