@@ -175,22 +175,38 @@ class EncoderCompress(nn.Module):
         self.layers = layers
         self.norm = LayerNormalization(features)
         self.compress_factor = compress_factor
-        self.compress = nn.Linear(features * compress_factor, features)
+        # Заменяем линейный слой на свертку с остаточным соединением
+        self.compress = nn.Sequential(
+            nn.Conv1d(
+                in_channels=features,
+                out_channels=features,
+                kernel_size=compress_factor,
+                stride=compress_factor,
+                padding=0  # Без паддинга для точного сжатия
+            ),
+            nn.ReLU()
+        )
+        # Для остаточного соединения
+        self.res_compress = nn.Linear(features*compress_factor, features)
 
     def forward(self, x, mask):
-        # Применяем слои энкодера
         for layer in self.layers:
             x = layer(x, mask)
-
-        # Нормализация
         x = self.norm(x)
 
-        # Проверка и добавление паддинга
+        residual = x  # Сохраняем для остаточного соединения
         batch, seq_len, d_model = x.shape
-        # Сжатие последовательности
-        x = x.view(batch, seq_len // self.compress_factor, d_model * self.compress_factor)
-        x = self.compress(x)  # (batch, new_seq_len, d_model)
-        return x
+
+        # Сжимаем последовательность
+        x = x.permute(0, 2, 1)  # [batch, d_model, seq_len]
+        x = self.compress(x)  # [batch, d_model, new_len]
+        x = x.permute(0, 2, 1)  # [batch, new_len, d_model]
+
+        # Обработка остатка (пулинг + линейный слой)
+        residual = residual.view(batch, seq_len // self.compress_factor, d_model * self.compress_factor)
+        residual = self.res_compress(residual)
+
+        return x + residual  # Остаточное соединение
 
 class DecoderBlock(nn.Module):
 
@@ -229,27 +245,28 @@ class DecoderExpand(nn.Module):
         super().__init__()
         self.layers = layers
         self.norm = LayerNormalization(features)
-        self.expand_factor = expand_factor  # Сохраняем коэффициент расширения
-        self.expand = nn.Linear(features, features * expand_factor)  # Линейный слой для расширения
-
-    def forward(self, x, encoder_output, src_mask, tgt_mask):
-        # Расширение последовательности
-        x = self.expand(x)  # (batch, seq_len, features * expand_factor)
-        batch, seq_len, d_model = x.shape
-
-        # Переформируем тензор с учетом expand_factor
-        # Новые размеры: (batch, seq_len * expand_factor, d_model // expand_factor)
-        x = x.view(
-            batch,
-            seq_len * self.expand_factor,
-            d_model // self.expand_factor
+        self.expand_factor = expand_factor
+        self.expand = nn.Sequential(
+            nn.ConvTranspose1d(
+                in_channels=features,
+                out_channels=features,
+                kernel_size=expand_factor,
+                stride=expand_factor,
+                padding=0,
+            ),
+            nn.GELU()
         )
 
-        # Применяем слои декодера
+    def forward(self, x, encoder_output, src_mask, tgt_mask):
+        batch, seq_len, d_model = x.shape
+        # Permute to (batch, d_model, seq_len)
+        x = x.permute(0, 2, 1)
+        x = self.expand(x)  # (batch, d_model, seq_len * expand_factor)
+        x = x.permute(0, 2, 1)  # (batch, seq_len * expand_factor, d_model)
+
         for layer in self.layers:
             x = layer(x, encoder_output, src_mask, tgt_mask)
 
-        # Нормализация
         return self.norm(x)
 
 class ProjectionLayer(nn.Module):
@@ -281,12 +298,22 @@ class Transformer(nn.Module):
 
     def decode(self, encoder_output, src_mask):
         # Адаптация маски для сжатого представления (предполагаем сжатие в 2 раза)
+        compress_factor = self.encoder.compress_factor
+
         if src_mask is not None:
-            if src_mask.dim() == 3:  # (batch, 1, seq_len)
-                compressed_mask = F.max_pool1d(src_mask.float(), kernel_size=2, stride=2)
+            if src_mask.dim() == 3:
+                compressed_mask = F.max_pool1d(
+                    src_mask.float(),
+                    kernel_size=compress_factor,
+                    stride=compress_factor
+                )
                 src_mask = compressed_mask.to(src_mask.dtype)
-            elif src_mask.dim() == 2:  # (batch, seq_len)
-                compressed_mask = F.max_pool1d(src_mask.unsqueeze(1).float(), kernel_size=2, stride=2)
+            elif src_mask.dim() == 2:
+                compressed_mask = F.max_pool1d(
+                    src_mask.unsqueeze(1).float(),
+                    kernel_size=compress_factor,
+                    stride=compress_factor
+                )
                 src_mask = compressed_mask.squeeze(1).to(src_mask.dtype)
             else:
                 raise RuntimeError(f"Unsupported src_mask dim: {src_mask.dim()}")
