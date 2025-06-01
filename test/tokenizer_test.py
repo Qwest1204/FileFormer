@@ -4,8 +4,8 @@ from tokenizer import Tokenizer
 class TestTokenizer(unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super(TestTokenizer, self).__init__(*args, **kwargs)
-        self.vocab_path = "vocab4test.json"
-        self.merges_path = "merges4test.txt"
+        self.vocab_path = "test/vocab4test.json"
+        self.merges_path = "test/merges4test.txt"
     def test_load(self):
         tokenizer = Tokenizer()
         tokenizer.load_vocab_and_merges(self.vocab_path, self.merges_path)
