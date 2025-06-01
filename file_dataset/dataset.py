@@ -1,28 +1,15 @@
-import zlib
 import torch
 from tqdm import tqdm
 from pathlib import Path
-from hashlib import sha256, md5
-from tokenizer import Tokenizer
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 
 
 class FileDataset(Dataset):
-    def __init__(self, path, hash_type, max_seq_length):
-        self.tokenizer = Tokenizer()
+    def __init__(self, path, max_seq_length, tokenizer):
+        self.tokenizer = tokenizer
         self.files = [x for x in Path(path).glob('**/*') if x.is_file()]
         self.max_seq_length = max_seq_length  # В токенах (учитывая SOF/EOF)
-
-        # Инициализация хеш-функции
-        if hash_type == 'md5':
-            self.hash_func = md5
-        elif hash_type == 'sha256':
-            self.hash_func = sha256
-        elif hash_type == 'crc32':
-            self.hash_func = lambda x: zlib.crc32(x) & 0xFFFFFFFF
-        else:
-            raise ValueError("Unsupported hash type")
 
         self.data = self.prepare(self.files)
 
@@ -30,7 +17,7 @@ class FileDataset(Dataset):
         data = []
         for file in tqdm(files):
             with open(file, 'rb') as f:
-                data_from_file = f.read()
+                data_from_file = f.read().hex()
                 tokens = self.tokenizer.encode(data_from_file)
 
                 # Разделение на последовательности с учетом max_length
@@ -41,7 +28,7 @@ class FileDataset(Dataset):
 
                     # Добавляем паддинг только если необходимо
                     if pad_size > 0:
-                        chunk += [self.tokenizer.get_idx_from_token('<PAD>')] * pad_size
+                        chunk += [259] * pad_size
 
                     # Создание масок внимания (1 для реальных токенов, 0 для паддинга)
                     attention_mask = [1] * current_length + [0] * pad_size
