@@ -1,3 +1,3 @@
 __all__ = ['Tokenizer']
 
-from .module import Tokenizer
+from .BPE import BPETokenizerSimple as Tokenizer
