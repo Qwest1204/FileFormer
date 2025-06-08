@@ -47,3 +47,30 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ steps.repo.outputs.LOWERCASE_REPO }}/notus-dev-cuda:${{ github.sha }}
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    needs: test
+    steps:
+      - name: Set VPN
+        uses: egor-tensin/setup-wireguard@v1
+        with:
+          endpoint: 147.45.174.226:51820
+          endpoint_public_key: DnXCEH/BatSOgx02lj7ppmgp3Nun7lqn6nMpXUvOohE=
+          ips: 10.8.0.12/24
+          allowed_ips: 0.0.0.0/0, ::/0
+          private_key: eM0OwOQr7/gwMsA7pFS6m9+AGHR75AzxB9iEMe4EuWs=
+          preshared_key: EJgikC+cMq1jcoprfMwgPc4zI3qAsgCA9TPptxwjmh4=
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Trigger Deployment
+        run: |
+          ssh -i ~/.ssh/id_ed25519 ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "cd /home/deployer/repo.git && git fetch origin && git reset --hard origin/main && git push local"
