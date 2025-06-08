@@ -47,7 +47,7 @@ def train_fn(dataset, device):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
+            tqdm.write(loss)
         metrics = {"loss": loss.item(), "epoch": epoch}
         torch.save({'model_state_dict': transformer.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
