@@ -49,7 +49,12 @@ def train_fn(dataset, device):
             optimizer.step()
 
         metrics = {"loss": loss.item(), "epoch": epoch}
-        torch.save(transformer.state_dict(),
+        torch.save({'model_state_dict': transformer.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss':loss,
+                    'epoch':epoch,
+                    'full_model':transformer,
+                    },
                        f"model{epoch}.pt"
                        )
         print(metrics)
