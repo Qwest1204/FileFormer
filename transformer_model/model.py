@@ -281,15 +281,16 @@ class ProjectionLayer(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, encoder: EncoderCompress, decoder: DecoderExpand,
+    def __init__(self, encoder: EncoderCompress or Encoder, decoder: DecoderExpand or Decoder,
                  src_embed: InputEmbeddings, src_pos: PositionalEncoding,
-                 projection_layer: ProjectionLayer) -> None:
+                 projection_layer: ProjectionLayer, compress) -> None:
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.src_embed = src_embed
         self.src_pos = src_pos
         self.projection_layer = projection_layer
+        self.compress = compress
 
     def encode(self, src, src_mask):
         src = self.src_embed(src)
@@ -298,27 +299,32 @@ class Transformer(nn.Module):
 
     def decode(self, encoder_output, src_mask):
         # Адаптация маски для сжатого представления (предполагаем сжатие в 2 раза)
-        compress_factor = self.encoder.compress_factor
+        if self.compress:
+            compress_factor = self.encoder.compress_factor
 
-        if src_mask is not None:
-            if src_mask.dim() == 3:
-                compressed_mask = F.max_pool1d(
-                    src_mask.float(),
-                    kernel_size=compress_factor,
-                    stride=compress_factor
-                )
-                src_mask = compressed_mask.to(src_mask.dtype)
-            elif src_mask.dim() == 2:
-                compressed_mask = F.max_pool1d(
-                    src_mask.unsqueeze(1).float(),
-                    kernel_size=compress_factor,
-                    stride=compress_factor
-                )
-                src_mask = compressed_mask.squeeze(1).to(src_mask.dtype)
-            else:
-                raise RuntimeError(f"Unsupported src_mask dim: {src_mask.dim()}")
+            if src_mask is not None:
+                if src_mask.dim() == 3:
+                    compressed_mask = F.max_pool1d(
+                        src_mask.float(),
+                        kernel_size=compress_factor,
+                        stride=compress_factor
+                    )
+                    src_mask = compressed_mask.to(src_mask.dtype)
+                elif src_mask.dim() == 2:
+                    compressed_mask = F.max_pool1d(
+                        src_mask.unsqueeze(1).float(),
+                        kernel_size=compress_factor,
+                        stride=compress_factor
+                    )
+                    src_mask = compressed_mask.squeeze(1).to(src_mask.dtype)
+                else:
+                    raise RuntimeError(f"Unsupported src_mask dim: {src_mask.dim()}")
 
-        return self.decoder(encoder_output, encoder_output, src_mask, None)
+            return self.decoder(encoder_output, encoder_output, src_mask, None)
+
+        else:
+            return self.decoder(encoder_output, encoder_output, src_mask, None)
+
 
     def project(self, x):
         return self.projection_layer(x)
@@ -330,7 +336,7 @@ class Transformer(nn.Module):
 
 
 def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: float, n_layers: int,
-                      n_heads: int, d_ff: int, factor: int) -> Transformer:
+                      n_heads: int, d_ff: int, factor: int, compress: bool) -> Transformer:
     # Create the embedding layers
     src_embed = InputEmbeddings(d_model, vocab_size)
 
@@ -356,14 +362,18 @@ def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: 
         decoder_blocks.append(decoder_block)
 
     # Create the encoder and decoder
-    encoder = EncoderCompress(d_model, nn.ModuleList(encoder_blocks), compress_factor=factor)
-    decoder = DecoderExpand(d_model, nn.ModuleList(decoder_blocks), expand_factor=factor)
+    if compress:
+        encoder = EncoderCompress(d_model, nn.ModuleList(encoder_blocks), compress_factor=factor)
+        decoder = DecoderExpand(d_model, nn.ModuleList(decoder_blocks), expand_factor=factor)
+    else:
+        encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
+        decoder = Decoder(d_model, nn.ModuleList(decoder_blocks))
 
     # Create the projection layer
     projection_layer = ProjectionLayer(d_model, vocab_size)
 
     # Create the transformer
-    transformer = Transformer(encoder, decoder, src_embed, src_pos, projection_layer)
+    transformer = Transformer(encoder, decoder, src_embed, src_pos, projection_layer, compress)
 
     # Initialize the parameters
     for p in transformer.parameters():
