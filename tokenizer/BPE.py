@@ -1,6 +1,7 @@
 from collections import Counter, deque
 from functools import lru_cache
 import json
+from tqdm import tqdm
 
 
 class BPETokenizerSimple:
@@ -35,7 +36,7 @@ class BPETokenizerSimple:
 
         # Initialize vocabulary with base characters
         # Start with all 256 ASCII characters as foundation
-        unique_chars = [chr(i) for i in range(256)]
+        unique_chars = []
         # Add any unique characters from text not in ASCII
         unique_chars.extend(char for char in sorted(set(processed_text))
                             if char not in unique_chars)
@@ -44,22 +45,22 @@ class BPETokenizerSimple:
             unique_chars.append('Ġ')
 
         # Build initial vocab mappings
-        self.vocab = {i: char for i, char in enumerate(unique_chars)}
+        self.vocab = {i: char for i, char in tqdm(enumerate(unique_chars))}
         self.inverse_vocab = {char: i for i, char in self.vocab.items()}
 
         # Add special tokens if not already present
         if allowed_special:
-            for token in allowed_special:
+            for token in tqdm(allowed_special):
                 if token not in self.inverse_vocab:
                     new_id = len(self.vocab)
                     self.vocab[new_id] = token
                     self.inverse_vocab[token] = new_id
 
         # Convert processed text to initial token IDs
-        token_ids = [self.inverse_vocab[char] for char in processed_text]
+        token_ids = [self.inverse_vocab[char] for char in tqdm(processed_text)]
 
         # BPE training loop: merge frequent pairs until vocab_size reached
-        for new_id in range(len(self.vocab), vocab_size):
+        for new_id in tqdm(range(len(self.vocab), vocab_size)):
             # Find most frequent adjacent token pair
             pair_id = self.find_freq_pair(token_ids, mode="most")
             if pair_id is None:  # Stop if no mergable pairs remain
