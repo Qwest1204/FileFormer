@@ -1,12 +1,12 @@
 import unittest
-from tokenizer import Tokenizer
+from Notus import Tokenizer
 
 class TestTokenizer(unittest.TestCase):
     def __init__(self, *args, **kwargs):
         super(TestTokenizer, self).__init__(*args, **kwargs)
-        self.vocab_path = "test/vocab4test.json"
-        self.merges_path = "test/merges4test.txt"
-    def test_load(self):
+        self.vocab_path = "test/vocab.json"
+        self.merges_path = "test/merges.txt"
+    def test_load_file(self):
         tokenizer = Tokenizer()
         tokenizer.load_vocab_and_merges(self.vocab_path, self.merges_path)
         self.assertEqual(tokenizer, tokenizer)  # add assertion here
