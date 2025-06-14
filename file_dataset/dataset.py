@@ -10,7 +10,7 @@ class FileDataset(Dataset):
         self.tokenizer = tokenizer
         self.files = [x for x in Path(path).glob('**/*') if x.is_file()]
         self.max_seq_length = max_seq_length  # В токенах (учитывая SOF/EOF)
-
+        self.pad_token = self.tokenizer.get_idx_from_token("<|PAD|>")
         self.data = self.prepare(self.files)
 
     def prepare(self, files):
@@ -28,7 +28,7 @@ class FileDataset(Dataset):
 
                     # Добавляем паддинг только если необходимо
                     if pad_size > 0:
-                        chunk += [259] * pad_size
+                        chunk += [self.pad_token] * pad_size
 
                     # Создание масок внимания (1 для реальных токенов, 0 для паддинга)
                     attention_mask = [1] * current_length + [0] * pad_size
