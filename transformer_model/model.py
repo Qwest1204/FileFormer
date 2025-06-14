@@ -4,6 +4,9 @@ import torch.nn.functional as F
 import math
 
 class LayerNormalization(nn.Module):
+    """
+    Layer normalization layer that normalizes the input features.
+    """
     def __init__(self, features: int, eps: float = 10 ** -6) -> None:
         super().__init__()
         self.eps = eps
@@ -11,11 +14,17 @@ class LayerNormalization(nn.Module):
         self.bias = nn.Parameter(torch.zeros(features))
 
     def forward(self, x):
+        """
+        Forward pass. Computes mean and standard deviation, then normalizes the input.
+        """
         mean = x.mean(dim=-1, keepdim=True)
         std = x.std(dim=-1, keepdim=True)
         return self.alpha * (x - mean) / (std + self.eps) + self.bias
 
 class FeedForwardBlock(nn.Module):
+    """
+    Feed-forward block with two linear layers and dropout.
+    """
     def __init__(self, d_model: int, d_ff: int, dropout: float) -> None:
         super().__init__()
         self.linear_1 = nn.Linear(d_model, d_ff)
@@ -23,9 +32,15 @@ class FeedForwardBlock(nn.Module):
         self.linear_2 = nn.Linear(d_ff, d_model)
 
     def forward(self, x):
+        """
+        Forward pass. Applies first linear layer, ReLU activation, dropout, and second linear layer.
+        """
         return self.linear_2(self.dropout(torch.relu(self.linear_1(x))))
 
 class InputEmbeddings(nn.Module):
+    """
+    Input embedding layer that maps token indices to dense vectors.
+    """
     def __init__(self, d_model: int, vocab_size: int) -> None:
         super().__init__()
         self.d_model = d_model
@@ -33,9 +48,15 @@ class InputEmbeddings(nn.Module):
         self.embedding = nn.Embedding(vocab_size, d_model)
 
     def forward(self, x):
+        """
+        Forward pass. Embeds input tokens and scales by sqrt(d_model).
+        """
         return self.embedding(x) * math.sqrt(self.d_model)
 
 class PositionalEncoding(nn.Module):
+    """
+    Adds positional encoding to the input embeddings using sine and cosine functions.
+    """
     def __init__(self, d_model: int, seq_len: int, dropout: float) -> None:
         super().__init__()
         self.d_model = d_model
@@ -50,20 +71,32 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
+        """
+        Forward pass. Adds positional encoding to the input and applies dropout.
+        """
         assert x.size(1) <= self.seq_len, "Sequence length exceeds the maximum allowed length."
         x = x + (self.pe[:, :x.shape[1], :]).requires_grad_(False)
         return self.dropout(x)
 
 class ResidualConnection(nn.Module):
+    """
+    Residual connection with layer normalization and dropout.
+    """
     def __init__(self, features: int, dropout: float) -> None:
         super().__init__()
         self.dropout = nn.Dropout(dropout)
         self.norm = LayerNormalization(features)
 
     def forward(self, x, sublayer):
+        """
+        Forward pass. Applies layer normalization, sublayer, dropout, and adds residual connection.
+        """
         return x + self.dropout(sublayer(self.norm(x)))
 
 class MultiHeadAttentionBlock(nn.Module):
+    """
+    Multi-head attention block that splits the input into multiple heads for parallel attention computation.
+    """
     def __init__(self, d_model: int, h: int, dropout: float) -> None:
         super().__init__()
         self.d_model = d_model
@@ -78,6 +111,9 @@ class MultiHeadAttentionBlock(nn.Module):
 
     @staticmethod
     def attention(query, key, value, mask, dropout: nn.Dropout):
+        """
+        Computes the attention scores and applies them to the value.
+        """
         d_k = query.shape[-1]
         attention_scores = (query @ key.transpose(-2, -1)) / math.sqrt(d_k)
         if mask is not None:
@@ -93,6 +129,9 @@ class MultiHeadAttentionBlock(nn.Module):
         return (attention_scores @ value), attention_scores
 
     def forward(self, q, k, v, mask):
+        """
+        Forward pass. Computes query, key, and value matrices, splits them into heads, computes attention, and concatenates the heads.
+        """
         query = self.w_q(q)
         key = self.w_k(k)
         value = self.w_v(v)
@@ -107,6 +146,9 @@ class MultiHeadAttentionBlock(nn.Module):
         return self.w_o(x)
 
 class EncoderBlock(nn.Module):
+    """
+    Encoder block consisting of self-attention and feed-forward layers with residual connections.
+    """
     def __init__(self, features: int, self_attention_block: MultiHeadAttentionBlock,
                  feed_forward_block: FeedForwardBlock, dropout: float) -> None:
         super().__init__()
@@ -115,22 +157,34 @@ class EncoderBlock(nn.Module):
         self.residual_connections = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(2)])
 
     def forward(self, x, src_mask):
+        """
+        Forward pass. Applies self-attention and feed-forward layers with residual connections.
+        """
         x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, src_mask))
         x = self.residual_connections[1](x, self.feed_forward_block)
         return x
 
 class Encoder(nn.Module):
+    """
+    Encoder consisting of a stack of encoder blocks and layer normalization.
+    """
     def __init__(self, features: int, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
         self.norm = LayerNormalization(features)
 
     def forward(self, x, mask):
+        """
+        Forward pass. Applies each encoder block in sequence and normalizes the output.
+        """
         for layer in self.layers:
             x = layer(x, mask)
         return self.norm(x)
 
 class EncoderCompress(nn.Module):
+    """
+    Encoder with compression mechanism that reduces sequence length by a factor.
+    """
     def __init__(self, features: int, layers: nn.ModuleList, compress_factor: int = 2) -> None:
         super().__init__()
         self.layers = layers
@@ -149,6 +203,9 @@ class EncoderCompress(nn.Module):
         self.res_compress = nn.Linear(features*compress_factor, features)
 
     def forward(self, x, mask):
+        """
+        Forward pass. Applies encoder blocks, compresses the sequence, and adds residual connection.
+        """
         for layer in self.layers:
             x = layer(x, mask)
         x = self.norm(x)
@@ -168,6 +225,9 @@ class EncoderCompress(nn.Module):
         return x + residual
 
 class DecoderBlock(nn.Module):
+    """
+    Decoder block consisting of self-attention, cross-attention, and feed-forward layers with residual connections.
+    """
     def __init__(self, features: int, self_attention_block: MultiHeadAttentionBlock,
                  cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock,
                  dropout: float) -> None:
@@ -178,23 +238,35 @@ class DecoderBlock(nn.Module):
         self.residual_connections = nn.ModuleList([ResidualConnection(features, dropout) for _ in range(3)])
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
+        """
+        Forward pass. Applies self-attention, cross-attention, and feed-forward layers with residual connections.
+        """
         x = self.residual_connections[0](x, lambda x: self.self_attention_block(x, x, x, tgt_mask))
         x = self.residual_connections[1](x, lambda x: self.cross_attention_block(x, encoder_output, encoder_output, src_mask))
         x = self.residual_connections[2](x, self.feed_forward_block)
         return x
 
 class Decoder(nn.Module):
+    """
+    Decoder consisting of a stack of decoder blocks and layer normalization.
+    """
     def __init__(self, features: int, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
         self.norm = LayerNormalization(features)
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
+        """
+        Forward pass. Applies each decoder block in sequence and normalizes the output.
+        """
         for layer in self.layers:
             x = layer(x, encoder_output, src_mask, tgt_mask)
         return self.norm(x)
 
 class DecoderExpand(nn.Module):
+    """
+    Decoder with expansion mechanism that increases sequence length by a factor.
+    """
     def __init__(self, features: int, layers: nn.ModuleList, expand_factor: int = 2) -> None:
         super().__init__()
         self.layers = layers
@@ -212,6 +284,9 @@ class DecoderExpand(nn.Module):
         )
 
     def forward(self, x, encoder_output, src_mask, tgt_mask):
+        """
+        Forward pass. Expands the sequence length and applies decoder blocks.
+        """
         batch, seq_len, d_model = x.shape
         x = x.permute(0, 2, 1)
         x = self.expand(x)
@@ -223,14 +298,23 @@ class DecoderExpand(nn.Module):
         return self.norm(x)
 
 class ProjectionLayer(nn.Module):
+    """
+    Projection layer that maps decoder output to vocabulary size.
+    """
     def __init__(self, d_model, vocab_size) -> None:
         super().__init__()
         self.proj = nn.Linear(d_model, vocab_size)
 
     def forward(self, x):
+        """
+        Forward pass. Projects input to vocabulary size.
+        """
         return self.proj(x)
 
 class Transformer(nn.Module):
+    """
+    Transformer model consisting of encoder, decoder, embeddings, positional encoding, and projection layer.
+    """
     def __init__(self, encoder, decoder, src_embed, src_pos, projection_layer, compress):
         super().__init__()
         self.encoder = encoder
@@ -241,11 +325,17 @@ class Transformer(nn.Module):
         self.compress = compress
 
     def encode(self, src, src_mask):
+        """
+        Encodes the source sequence.
+        """
         src = self.src_embed(src)
         src = self.src_pos(src)
         return self.encoder(src, src_mask)
 
     def decode(self, encoder_output, src_mask):
+        """
+        Decodes the encoder output.
+        """
         if self.compress:
             compress_factor = self.encoder.compress_factor
             if src_mask is not None:
@@ -268,17 +358,27 @@ class Transformer(nn.Module):
         return self.decoder(encoder_output, encoder_output, src_mask, None)
 
     def project(self, x):
+        """
+        Projects the decoder output to vocabulary size.
+        """
         return self.projection_layer(x)
 
     def forward(self, src, src_mask):
+        """
+        Forward pass. Encodes the source, decodes the encoded output, and projects to vocabulary size.
+        """
         x = self.encode(src, src_mask)
         x = self.decode(x, src_mask)
         return self.project(x)
 
 def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: float, n_layers: int,
                       n_heads: int, d_ff: int, factor: int, compress: bool) -> Transformer:
+    """
+    Builds a transformer model with specified parameters.
+    """
     src_embed = InputEmbeddings(d_model, vocab_size)
     src_pos = PositionalEncoding(d_model, max_seq_len, dropout)
+    # Initializes input embeddings and positional encoding.
 
     encoder_blocks = []
     for _ in range(n_layers):
@@ -286,6 +386,7 @@ def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: 
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
         encoder_blocks.append(encoder_block)
+    # Creates encoder blocks with self-attention and feed-forward layers.
 
     decoder_blocks = []
     for _ in range(n_layers):
@@ -295,6 +396,7 @@ def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: 
         decoder_block = DecoderBlock(d_model, decoder_self_attention_block, decoder_cross_attention_block,
                                      feed_forward_block, dropout)
         decoder_blocks.append(decoder_block)
+    # Creates decoder blocks with self-attention, cross-attention, and feed-forward layers.
 
     if compress:
         encoder = EncoderCompress(d_model, nn.ModuleList(encoder_blocks), compress_factor=factor)
@@ -302,12 +404,16 @@ def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: 
     else:
         encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
         decoder = Decoder(d_model, nn.ModuleList(decoder_blocks))
+    # Initializes encoder and decoder with or without compression/expansion based on the compress flag.
 
     projection_layer = ProjectionLayer(d_model, vocab_size)
     transformer = Transformer(encoder, decoder, src_embed, src_pos, projection_layer, compress)
+    # Initializes projection layer and creates transformer model.
 
     for p in transformer.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
+    # Initializes model parameters with Xavier uniform initialization.
 
     return transformer
+    # Returns the constructed transformer model.

@@ -4,8 +4,20 @@ import torch
 from tqdm import tqdm
 
 class CompressEngine:
+    """
+    Compression engine that uses transformer models to compress and decompress data.
+    """
     def __init__(self, tokenizer: Tokenizer, compress_unit: Transformer,
                  error_fix_unit: Transformer, chunk_compress_size=256,):
+        """
+        Initializes the CompressEngine with a tokenizer, compression unit, error fix unit, and chunk size.
+
+        Args:
+            tokenizer: Tokenizer instance for encoding and decoding tokens.
+            compress_unit: Transformer model used for compression.
+            error_fix_unit: Transformer model used for error correction during decompression.
+            chunk_compress_size: Size of chunks for compression.
+        """
         self.tokenizer = tokenizer
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.pad_token = self.tokenizer.get_special_token_id("<|PAD|>")
@@ -15,10 +27,30 @@ class CompressEngine:
         self.chunk_compress_size = chunk_compress_size
 
     def apply_mask(self, tensor, mask):
+        """
+        Applies a mask to a tensor by setting masked positions to the mask token.
+
+        Args:
+            tensor: Tensor to which the mask will be applied.
+            mask: Mask tensor indicating positions to be masked.
+
+        Returns:
+            Tensor with mask applied.
+        """
         tensor[mask.bool()] = self.mask_token
         return tensor
 
     def max_probabilities(self, tensor1, tensor2):
+        """
+        Compares two tensors and selects the indices from the tensor with higher maximum probabilities.
+
+        Args:
+            tensor1: First tensor of probabilities.
+            tensor2: Second tensor of probabilities.
+
+        Returns:
+            Tensor of indices with higher probabilities.
+        """
         max_vals1, max_indices1 = torch.max(tensor1, dim=-1)
         max_vals2, max_indices2 = torch.max(tensor2, dim=-1)
         source_mask = max_vals1 >= max_vals2
@@ -26,6 +58,16 @@ class CompressEngine:
         return final_indices
 
     def create_mask(self, tensor1, tensor2):
+        """
+        Creates a mask based on differences between two tensors, including neighboring positions.
+
+        Args:
+            tensor1: First tensor to compare.
+            tensor2: Second tensor to compare.
+
+        Returns:
+            Mask tensor indicating positions with differences and their neighbors.
+        """
         initial_mask = (tensor1 != tensor2).int()
         new_mask = initial_mask.clone()
 
@@ -44,6 +86,15 @@ class CompressEngine:
         return new_mask
 
     def compress(self, data_from_file: bytes):
+        """
+        Compresses input data by tokenizing, chunking, and applying the compression unit.
+
+        Args:
+            data_from_file: Input data as bytes to be compressed.
+
+        Returns:
+            Tuple of compressed data and masks.
+        """
         tokens = self.tokenizer.encode(data_from_file.hex())
         num_chunks = (len(tokens) + self.chunk_compress_size - 1) // self.chunk_compress_size
 
@@ -69,6 +120,17 @@ class CompressEngine:
         return compress_data, maskss
 
     def decompress(self, data, mask, deep_of_error_correction) -> bytes:
+        """
+        Decompresses data by decoding, applying error correction, and converting back to bytes.
+
+        Args:
+            data: Compressed data.
+            mask: Mask associated with the compressed data.
+            deep_of_error_correction: Depth of error correction iterations.
+
+        Returns:
+            Decompressed data as bytes.
+        """
         data = torch.stack(data).to(self.device)
         mask = torch.stack(mask).to(self.device)
         batch_size = data.size(0)
@@ -102,5 +164,3 @@ class CompressEngine:
             return bytes.fromhex(hex_str)
         else:
             return bytes.fromhex(hex_str[:-1])
-
-
