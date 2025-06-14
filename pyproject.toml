@@ -7,7 +7,6 @@ readme = "Readme.md"
 
 # Add this section to specify your package location
 packages = [
-    { include = "notus" },  # If your code is in a folder named "notus"
     # OR
     { include = "src", from = "." }  # If using a src-layout
 ]
