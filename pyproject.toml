@@ -5,12 +5,6 @@ description = ""
 authors = ["Qwest1204 <workemailfordaniil@gmail.com>"]
 readme = "Readme.md"
 
-# Add this section to specify your package location
-packages = [
-    # OR
-    { include = ".", from = "." }  # If using a src-layout
-]
-
 [tool.poetry.dependencies]
 python = "^3.12"
 torch = "^2.7.0"
