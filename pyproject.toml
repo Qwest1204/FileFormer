@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "notus"
+name = "Notus"
 version = "0.2.3"
 description = ""
 authors = ["Qwest1204 <workemailfordaniil@gmail.com>"]
