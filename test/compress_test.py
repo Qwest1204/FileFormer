@@ -1,6 +1,8 @@
 import unittest
 
-from Notus import Tokenizer, CompressEngine, build_transformer
+from notus import Tokenizer
+from notus import CompressEngine
+from notus import build_transformer
 
 class MyTestCase(unittest.TestCase):
     def test_compressing(self):

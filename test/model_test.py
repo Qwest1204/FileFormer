@@ -1,8 +1,6 @@
 import unittest
 
-from sympy import factor
-
-from Notus import build_transformer
+from notus import build_transformer
 import torch
 
 class TestModel(unittest.TestCase):

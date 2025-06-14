@@ -1,5 +1,5 @@
 import unittest
-from Notus import Tokenizer
+from notus import Tokenizer
 
 class TestTokenizer(unittest.TestCase):
     def __init__(self, *args, **kwargs):

@@ -4,6 +4,10 @@ version = "0.2.3"
 description = ""
 authors = ["Qwest1204 <workemailfordaniil@gmail.com>"]
 readme = "Readme.md"
+packages = [
+    { include = "notus", from = "." }
+]
+
 
 [tool.poetry.dependencies]
 python = "^3.12"
