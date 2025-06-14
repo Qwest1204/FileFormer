@@ -6,8 +6,8 @@ from transformer_model import build_transformer
 
 class MyTestCase(unittest.TestCase):
     def test_compressing(self):
-        self.vocab_path = "vocab.json"
-        self.merges_path = "merges.txt"
+        self.vocab_path = "test/vocab.json"
+        self.merges_path = "test/merges.txt"
 
         tokenizer = Tokenizer()
         tokenizer.load_vocab_and_merges(self.vocab_path, self.merges_path)
@@ -33,7 +33,7 @@ class MyTestCase(unittest.TestCase):
 
         compress_engine = CompressEngine(tokenizer, compress_model, correct_model)
 
-        with open("model_test.py", "rb") as f:
+        with open("test/model_test.py", "rb") as f:
             data = f.read()
 
         data, mask = compress_engine.compress(data)
