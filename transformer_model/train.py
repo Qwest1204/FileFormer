@@ -4,13 +4,8 @@ from torch.utils.data import DataLoader
 import torch
 from tqdm import tqdm
 import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from torchinfo import summary
 from transformer_model import build_transformer
 
-from ray.train.torch import TorchTrainer
-from ray.train import SyncConfig
 import tempfile
 import ray.train.torch
 
@@ -59,6 +54,6 @@ def train_fn(dataset, device):
                        )
         print(metrics)
 
-dataset = torch.load("dataset.pt", weights_only=False)
+dataset = torch.load("weights/dataset.pt", weights_only=False)
 
 train_fn(dataset, "cuda")

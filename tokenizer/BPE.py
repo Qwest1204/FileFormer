@@ -193,19 +193,21 @@ class BPETokenizerSimple:
         Convert token IDs back to text string.
 
         Args:
-            token_ids: List of token IDs
+            token_ids: List of token IDs or list of lists (batch) of token IDs
 
         Returns:
             Decoded text string
         """
+        if isinstance(token_ids[0], list):  # Batch processing
+            decoded_string = ""
+            for sequence in token_ids:
+                decoded_string += self.decode(sequence)  # Recursive call
+            return decoded_string
+
         decoded_string = ""
         for token_id in token_ids:
             token = self.vocab[token_id]
-            # Handle space markers
-            if token.startswith("Ġ"):
-                decoded_string += " " + token[1:]  # Replace Ġ with space
-            else:
-                decoded_string += token
+            decoded_string += token
         return decoded_string
 
     def save_vocab_and_merges(self, vocab_path, bpe_merges_path):

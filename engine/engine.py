@@ -1,5 +1,5 @@
-from Notus import Tokenizer
-from Notus import Transformer
+from tokenizer import Tokenizer
+from transformer_model import Transformer
 import torch
 from tqdm import tqdm
 
@@ -15,34 +15,13 @@ class CompressEngine:
         self.chunk_compress_size = chunk_compress_size
 
     def apply_mask(self, tensor, mask):
-        # Создаем копию исходного тензора
-        new_tensor = tensor.clone()
-
-        # Применяем маску через булеву индексацию
-        new_tensor[mask.bool()] = self.mask_token
-
-        return new_tensor
+        tensor[mask.bool()] = self.mask_token
+        return tensor
 
     def max_probabilities(self, tensor1, tensor2):
-        """
-        Для каждого из 256 элементов выбирает значение с максимальной вероятностью между двумя тензорами,
-        возвращает индексы выбранных значений.
-
-        Args:
-            tensor1 (torch.Tensor): Первый тензор размерности [256, 5667]
-            tensor2 (torch.Tensor): Второй тензор размерности [256, 5667]
-
-        Returns:
-            torch.Tensor: Тензор индексов выбранных значений размерности [256]
-        """
-        # Находим максимальные значения и их индексы для каждого тензора
         max_vals1, max_indices1 = torch.max(tensor1, dim=-1)
         max_vals2, max_indices2 = torch.max(tensor2, dim=-1)
-
-        # Сравниваем максимальные значения и выбираем источник
         source_mask = max_vals1 >= max_vals2
-
-        # Формируем итоговые индексы
         final_indices = torch.where(source_mask, max_indices1, max_indices2)
         return final_indices
 
@@ -50,34 +29,26 @@ class CompressEngine:
         initial_mask = (tensor1 != tensor2).int()
         new_mask = initial_mask.clone()
 
-        # Находим индексы единиц в начальной маске
         indices = torch.where(initial_mask == 1)[0]
 
-        # Если есть хотя бы одна единица
         if indices.numel() > 0:
-            # Вычисляем индексы левых и правых соседей
             left_indices = indices - 1
             right_indices = indices + 1
 
-            # Фильтруем индексы, чтобы не выйти за границы
             left_indices = left_indices[left_indices >= 0]
             right_indices = right_indices[right_indices < initial_mask.size(0)]
 
-            # Объединяем все индексы соседей
             all_indices = torch.cat([left_indices, right_indices])
-
-            # Устанавливаем 1 для всех соседних позиций
             new_mask[all_indices] = 1
 
         return new_mask
 
     def compress(self, data_from_file: bytes):
         tokens = self.tokenizer.encode(data_from_file.hex())
-
         num_chunks = (len(tokens) + self.chunk_compress_size - 1) // self.chunk_compress_size
 
-        chunks = torch.full((num_chunks, self.chunk_compress_size), self.pad_token, dtype=torch.int32).to(self.device)
-        masks = torch.zeros((num_chunks, self.chunk_compress_size), dtype=torch.int32).to(self.device)
+        chunks = torch.full((num_chunks, self.chunk_compress_size), self.pad_token, dtype=torch.int32, device=self.device)
+        masks = torch.zeros((num_chunks, self.chunk_compress_size), dtype=torch.int32, device=self.device)
 
         for i in range(num_chunks):
             start = i * self.chunk_compress_size
@@ -85,40 +56,51 @@ class CompressEngine:
             actual_len = min(end, len(tokens)) - start
             chunk_data = tokens[start:end]
 
-            chunks[i, :actual_len] = torch.tensor(chunk_data, dtype=torch.int32).to(self.device)
+            chunks[i, :actual_len] = torch.tensor(chunk_data, dtype=torch.int32, device=self.device)
             masks[i, :actual_len] = 1
 
-        compress_data = [self.compress_unit.encode(chunk, mask).to(self.device) for chunk, mask in tqdm(zip(chunks, masks))]
-        return compress_data, masks
+        compress_data = []
+        maskss = []
+        for chunk, mask in tqdm(zip(chunks, masks)):
+            compressed_chunk = self.compress_unit.encode(chunk.unsqueeze(0), mask.unsqueeze(0))
+            compress_data.append(compressed_chunk.squeeze(0))
+            maskss.append(mask)
+
+        return compress_data, maskss
 
     def decompress(self, data, mask, deep_of_error_correction) -> bytes:
-        token_ids = []
-        for data, mask in tqdm(zip(data, mask)):
-            decoder_out_main = self.compress_unit.project(
-                self.compress_unit.decode(data, mask.unsqueeze(0)).to(self.device)
-            ).to(self.device)
-            decoder_out_main = torch.argmax(decoder_out_main, dim=-1)
+        data = torch.stack(data).to(self.device)
+        mask = torch.stack(mask).to(self.device)
+        batch_size = data.size(0)
 
-            decoder_out_alternate = self.compress_unit.project(
-                self.compress_unit.decode(data, mask.unsqueeze(0)).to(self.device)
-            ).to(self.device)
-            decoder_out_alternate = torch.argmax(decoder_out_alternate, dim=-1)
+        print(f"Input data shape: {data.shape}")
+        print(f"Input mask shape: {mask.shape}")
 
-            for _ in range(deep_of_error_correction):
-                mask_mask = self.create_mask(decoder_out_main, decoder_out_alternate)
-                mark_src = self.apply_mask(decoder_out_main, mask_mask)
+        decoder_out = self.compress_unit.decode(data, mask)
+        print(f"Decoder output shape: {decoder_out.shape}")
 
-                decoder_out_main_n = self.error_fix_unit.forward(mark_src, mask)
-                decoder_out_alternate_n = self.error_fix_unit.forward(mark_src, mask)
+        decoder_out_projected = self.compress_unit.project(decoder_out)
+        print(f"Projected decoder output shape: {decoder_out_projected.shape}")
 
-                decoder_out_main = torch.argmax(decoder_out_main_n, dim=-1)
-                decoder_out_alternate = torch.argmax(decoder_out_alternate_n, dim=-1)
+        decoder_out_main = torch.argmax(decoder_out_projected, dim=-1)
+        decoder_out_alternate = decoder_out_main.clone()
 
-            token_ids.extend(self.max_probabilities(decoder_out_main_n, decoder_out_alternate_n))
-        token_ids = torch.cat(token_ids).to(self.device)
-        hex_str = self.tokenizer.decode(token_ids.tolist())
+        for _ in range(deep_of_error_correction):
+            mask_mask = self.create_mask(decoder_out_main, decoder_out_alternate)
+            mark_src = self.apply_mask(decoder_out_main.clone(), mask_mask)
+
+            decoder_out_main_n = self.error_fix_unit.forward(mark_src, mask)
+            decoder_out_alternate_n = self.error_fix_unit.forward(mark_src, mask)
+
+            decoder_out_main = torch.argmax(decoder_out_main_n, dim=-1)
+            decoder_out_alternate = torch.argmax(decoder_out_alternate_n, dim=-1)
+
+        token_ids = self.max_probabilities(decoder_out_main_n, decoder_out_alternate_n)
+        hex_str = self.tokenizer.decode(token_ids.cpu().tolist())
 
         if len(hex_str) % 2 == 0:
             return bytes.fromhex(hex_str)
         else:
             return bytes.fromhex(hex_str[:-1])
+
+
