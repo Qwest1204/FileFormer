@@ -1,5 +1,5 @@
-from tokenizer import Tokenizer
-from transformer_model import Transformer
+from Notus import Tokenizer
+from Notus import Transformer
 import torch
 from tqdm import tqdm
 

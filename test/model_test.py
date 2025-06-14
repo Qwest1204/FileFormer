@@ -2,7 +2,7 @@ import unittest
 
 from sympy import factor
 
-from transformer_model import build_transformer
+from Notus import build_transformer
 import torch
 
 class TestModel(unittest.TestCase):
