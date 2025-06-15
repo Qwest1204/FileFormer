@@ -10,7 +10,7 @@ class FileDataset(Dataset):
         self.tokenizer = tokenizer
         self.files = [x for x in Path(path).glob('**/*') if x.is_file()]
         self.max_seq_length = max_seq_length  # В токенах (учитывая SOF/EOF)
-        self.pad_token = self.tokenizer.get_idx_from_token("<|PAD|>")
+        self.pad_token = self.tokenizer.get_special_token_id("<|PAD|>")
         self.data = self.prepare(self.files)
 
     def prepare(self, files):
