@@ -339,20 +339,22 @@ class Transformer(nn.Module):
         if self.compress:
             compress_factor = self.encoder.compress_factor
             if src_mask is not None:
-                if src_mask.dim() == 3:
-                    compressed_mask = F.max_pool1d(
+                # Для 2D масок [batch, seq_len]
+                if src_mask.dim() == 2:
+                    src_mask = src_mask.view(src_mask.size(0), 1, src_mask.size(1))
+                    src_mask = F.max_pool1d(
                         src_mask.float(),
                         kernel_size=compress_factor,
                         stride=compress_factor
-                    )
-                    src_mask = compressed_mask.to(src_mask.dtype)
-                elif src_mask.dim() == 2:
-                    compressed_mask = F.max_pool1d(
-                        src_mask.unsqueeze(1).float(),
+                    ).squeeze(1).to(torch.long)
+
+                # Для 3D масок [batch, 1, seq_len]
+                elif src_mask.dim() == 3:
+                    src_mask = F.max_pool1d(
+                        src_mask.float(),
                         kernel_size=compress_factor,
                         stride=compress_factor
-                    )
-                    src_mask = compressed_mask.squeeze(1).to(src_mask.dtype)
+                    ).to(torch.long)
                 else:
                     raise RuntimeError(f"Unsupported src_mask dim: {src_mask.dim()}")
         return self.decoder(encoder_output, encoder_output, src_mask, None)

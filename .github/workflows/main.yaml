@@ -46,4 +46,4 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ steps.repo.outputs.LOWERCASE_REPO }}/notus-dev-cuda:${{ github.sha }}
+            ghcr.io/${{ steps.repo.outputs.LOWERCASE_REPO }}/notus-ray:${{ github.sha }}
