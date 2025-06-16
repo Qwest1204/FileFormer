@@ -4,7 +4,6 @@ from pathlib import Path
 from torch.utils.data import Dataset
 from torch.nn.utils.rnn import pad_sequence
 
-
 class FileDataset(Dataset):
     def __init__(self, path, max_seq_length, tokenizer):
         self.tokenizer = tokenizer

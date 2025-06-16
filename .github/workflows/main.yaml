@@ -1,6 +1,9 @@
 name: test building model
 
-on: push
+on:
+  push:
+    branches:
+      - master
 
 jobs:
   test:
