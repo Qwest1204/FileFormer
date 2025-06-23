@@ -3,6 +3,36 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 
+class UpscaleNet(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # Последовательность слоёв
+        self.layers = nn.Sequential(
+            # Этап 1: Увеличение каналов (16 -> 64)
+            nn.Conv1d(16, 64, kernel_size=3, padding=1),
+            nn.GELU(),
+
+            # Этап 2: Удвоение длины (32 -> 64)
+            nn.ConvTranspose1d(64, 128, kernel_size=4, stride=2, padding=1),
+            nn.GELU(),
+
+            # Повторить 5 раз (64 -> 128 -> 256 -> 512 -> 1024 -> 2048)
+            *self._make_upscale_block(128, 256),  # 64 -> 128
+            *self._make_upscale_block(256, 512),  # 128 -> 256
+            *self._make_upscale_block(512, 1024), # 256 -> 512
+            *self._make_upscale_block(1024, 2048), # 512 -> 1024
+            *self._make_upscale_block(2048, 2048)  # 1024 -> 2048 (каналы)
+        )
+
+    def _make_upscale_block(self, in_ch, out_ch):
+        return [
+            nn.ConvTranspose1d(in_ch, out_ch, kernel_size=4, stride=2, padding=1),
+            nn.ReLU()
+        ]
+
+    def forward(self, x):
+        return self.layers(x)
+
 class LayerNormalization(nn.Module):
     """
     Layer normalization layer that normalizes the input features.
