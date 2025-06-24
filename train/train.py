@@ -70,7 +70,7 @@ all_params = list(transformer_correction.parameters()) + \
 
 optimizer = optim.AdamW(all_params, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode='min', factor=0.5, patience=3, verbose=True
+    optimizer, mode='min', factor=0.5, patience=3,
 )
 criterion = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID)
 
