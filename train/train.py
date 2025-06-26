@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import os
 import time
+from torch.utils.tensorboard import SummaryWriter
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"  # Для синхронной обработки ошибок
 os.environ['TORCH_USE_CUDA_DSA'] = "1"
@@ -105,7 +106,9 @@ def validate_tensor(tensor, name, vocab_size=None):
 best_loss = float('inf')
 start_epoch = 0
 timestamp = time.strftime("%Y%m%d_%H%M%S")
+writer = SummaryWriter(os.path.join(SAVE_DIR, "logs", timestamp))  # Добавлено
 
+step_counter = 0  # Добавлено: счетчик шагов для TensorBoard
 for epoch in range(start_epoch, EPOCHS):
     epoch_loss = 0.0
     progress_bar = tqdm(
@@ -188,6 +191,14 @@ for epoch in range(start_epoch, EPOCHS):
 
             # Обновление статистик
             epoch_loss += loss.item()
+            step_counter += 1  # Добавлено: инкремент счетчика шагов
+
+            # Логирование в TensorBoard каждые 20 шагов
+            if step_counter % 20 == 0:  # Добавлено
+                writer.add_scalar('Loss/train', loss.item(), step_counter)
+                writer.add_scalar('Grad/norm', grad_norm, step_counter)
+                writer.add_scalar('Learning_rate', optimizer.param_groups[0]['lr'], step_counter)
+
             progress_bar.set_postfix({
                 "loss": f"{loss.item():.4f}",
                 "grad_norm": f"{grad_norm:.4f}"
@@ -206,6 +217,7 @@ for epoch in range(start_epoch, EPOCHS):
 
     # Вычисление средней потери за эпоху
     avg_epoch_loss = epoch_loss / len(dataloader)
+    writer.add_scalar('Loss/epoch_avg', avg_epoch_loss, epoch)  # Добавлено
     scheduler.step(avg_epoch_loss)
     print(f"\nEpoch {epoch + 1} | Avg Loss: {avg_epoch_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.6f}")
 
@@ -223,7 +235,7 @@ for epoch in range(start_epoch, EPOCHS):
         }
         torch.save(
             checkpoint,
-            os.path.join(SAVE_DIR, f"best_model_{timestamp}.pt")
+            os.path.join(SAVE_DIR, f"best_model_localattention_{timestamp}.pt")
         )
         print(f"Saved best model with loss: {best_loss:.4f}")
 
@@ -234,4 +246,5 @@ for epoch in range(start_epoch, EPOCHS):
             os.path.join(SAVE_DIR, f"model_epoch_{epoch + 1}_{timestamp}.pt")
         )
 
+writer.close()  # Добавлено
 print("Training completed!")
