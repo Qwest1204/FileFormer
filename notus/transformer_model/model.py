@@ -226,7 +226,8 @@ class LocalAttentionBlock(nn.Module):
             Output tensor (batch_size, seq_len, d_model)
         """
         batch_size = q.size(0)
-        seq_len = q.size(1)
+        seq_len_q = q.size(1)
+        seq_len_k = k.size(1)
 
         # Apply linear transformations and split into heads
         query = self.w_q(q).view(batch_size, -1, self.h, self.d_k).transpose(1, 2)
@@ -236,9 +237,9 @@ class LocalAttentionBlock(nn.Module):
         # Compute attention scores
         attn_scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_k)
 
-        # Apply local window constraint if window_size is specified
-        if self.window_size is not None:
-            local_mask = self.create_local_mask(seq_len, self.window_size, device=attn_scores.device)
+        # Apply local window constraint only for self-attention (when seq_len_q == seq_len_k)
+        if self.window_size is not None and seq_len_q == seq_len_k:
+            local_mask = self.create_local_mask(seq_len_q, self.window_size, device=attn_scores.device)
             attn_scores = attn_scores.masked_fill(local_mask == 0, -1e9)
 
         # Apply external mask (e.g., padding mask or future mask)
@@ -279,19 +280,14 @@ class LocalAttentionBlock(nn.Module):
         row_indices = torch.arange(seq_len, device=device).view(-1, 1)  # (seq_len, 1)
         col_indices = torch.arange(seq_len, device=device).view(1, -1)  # (1, seq_len)
 
-        # Compute start and end indices for each row
-        start_indices = torch.clamp(row_indices - left_radius, min=0)
-        end_indices = torch.clamp(row_indices + right_radius + 1, max=seq_len)
+        # Compute distance matrix
+        distance = torch.abs(col_indices - row_indices)
 
-        # Initialize mask with zeros
-        mask = torch.zeros((seq_len, seq_len), dtype=torch.float32, device=device)
-
-        # Set allowed positions within the window
-        for i in range(seq_len):
-            mask[i, start_indices[i]:end_indices[i]] = 1
+        # Create mask where only positions within window are allowed
+        mask = (distance <= left_radius) | (distance <= right_radius)
+        mask = mask.float()
 
         return mask.unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, seq_len)
-
 class EncoderBlock(nn.Module):
     """
     Encoder block consisting of self-attention and feed-forward layers with residual connections.
