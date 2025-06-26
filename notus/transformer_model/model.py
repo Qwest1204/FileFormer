@@ -20,8 +20,8 @@ class UpscaleNet(nn.Module):
             *self._make_upscale_block(128, 256),  # 64 -> 128
             *self._make_upscale_block(256, 512),  # 128 -> 256
             *self._make_upscale_block(512, 1024), # 256 -> 512
-            *self._make_upscale_block(1024, 2048), # 512 -> 1024
-            *self._make_upscale_block(2048, 2048)  # 1024 -> 2048 (каналы)
+            #*self._make_upscale_block(1024, 2048), # 512 -> 1024
+            #*self._make_upscale_block(2048, 2048)  # 1024 -> 2048 (каналы)
         )
 
     def _make_upscale_block(self, in_ch, out_ch):
@@ -175,11 +175,128 @@ class MultiHeadAttentionBlock(nn.Module):
         x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
         return self.w_o(x)
 
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
+from typing import Optional
+
+
+class LocalAttentionBlock(nn.Module):
+    """
+    Multi-head attention with local attention window.
+    Inherits from MultiHeadAttentionBlock and adds local window constraint.
+    """
+
+    def __init__(self, d_model: int, h: int, dropout: float, window_size: Optional[int] = None) -> None:
+        """
+        Args:
+            d_model: Dimension of the model.
+            h: Number of attention heads.
+            dropout: Dropout probability.
+            window_size: Size of the local attention window. If None, uses global attention.
+        """
+        super().__init__()
+        self.d_model = d_model
+        self.h = h
+        self.d_k = d_model // h
+        assert d_model % h == 0, "d_model is not divisible by h"
+
+        # Linear transformations for query, key, value, and output
+        self.w_q = nn.Linear(d_model, d_model, bias=False)
+        self.w_k = nn.Linear(d_model, d_model, bias=False)
+        self.w_v = nn.Linear(d_model, d_model, bias=False)
+        self.w_o = nn.Linear(d_model, d_model, bias=False)
+
+        self.dropout = nn.Dropout(dropout)
+        self.window_size = window_size  # Size of the local attention window
+
+    def forward(self, q, k, v, mask: Optional[torch.Tensor] = None):
+        """
+        Forward pass with local attention.
+
+        Args:
+            q: Query tensor (batch_size, seq_len, d_model)
+            k: Key tensor (batch_size, seq_len, d_model)
+            v: Value tensor (batch_size, seq_len, d_model)
+            mask: Optional mask tensor (batch_size, seq_len) or (batch_size, seq_len, seq_len)
+
+        Returns:
+            Output tensor (batch_size, seq_len, d_model)
+        """
+        batch_size = q.size(0)
+        seq_len = q.size(1)
+
+        # Apply linear transformations and split into heads
+        query = self.w_q(q).view(batch_size, -1, self.h, self.d_k).transpose(1, 2)
+        key = self.w_k(k).view(batch_size, -1, self.h, self.d_k).transpose(1, 2)
+        value = self.w_v(v).view(batch_size, -1, self.h, self.d_k).transpose(1, 2)
+
+        # Compute attention scores
+        attn_scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_k)
+
+        # Apply local window constraint if window_size is specified
+        if self.window_size is not None:
+            local_mask = self.create_local_mask(seq_len, self.window_size, device=attn_scores.device)
+            attn_scores = attn_scores.masked_fill(local_mask == 0, -1e9)
+
+        # Apply external mask (e.g., padding mask or future mask)
+        if mask is not None:
+            if mask.dim() == 2:
+                mask = mask.unsqueeze(1).unsqueeze(1)  # (batch_size, 1, 1, seq_len)
+            elif mask.dim() == 3:
+                mask = mask.unsqueeze(1)  # (batch_size, 1, seq_len, seq_len)
+            attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
+
+        # Normalize and apply dropout
+        attn_weights = F.softmax(attn_scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
+
+        # Apply attention weights to values
+        x = torch.matmul(attn_weights, value)
+        x = x.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
+        return self.w_o(x)
+
+    @staticmethod
+    def create_local_mask(seq_len: int, window_size: int, device: torch.device) -> torch.Tensor:
+        """
+        Creates a mask for local attention.
+
+        Args:
+            seq_len: Length of the sequence.
+            window_size: Size of the local attention window.
+            device: Device to place the mask on.
+
+        Returns:
+            Mask tensor (1, 1, seq_len, seq_len) where 1 indicates allowed positions.
+        """
+        # Calculate left and right radii for asymmetric windows near boundaries
+        left_radius = (window_size - 1) // 2
+        right_radius = window_size - 1 - left_radius
+
+        # Create indices for the sequence
+        row_indices = torch.arange(seq_len, device=device).view(-1, 1)  # (seq_len, 1)
+        col_indices = torch.arange(seq_len, device=device).view(1, -1)  # (1, seq_len)
+
+        # Compute start and end indices for each row
+        start_indices = torch.clamp(row_indices - left_radius, min=0)
+        end_indices = torch.clamp(row_indices + right_radius + 1, max=seq_len)
+
+        # Initialize mask with zeros
+        mask = torch.zeros((seq_len, seq_len), dtype=torch.float32, device=device)
+
+        # Set allowed positions within the window
+        for i in range(seq_len):
+            mask[i, start_indices[i]:end_indices[i]] = 1
+
+        return mask.unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, seq_len)
+
 class EncoderBlock(nn.Module):
     """
     Encoder block consisting of self-attention and feed-forward layers with residual connections.
     """
-    def __init__(self, features: int, self_attention_block: MultiHeadAttentionBlock,
+    def __init__(self, features: int, self_attention_block: LocalAttentionBlock,
                  feed_forward_block: FeedForwardBlock, dropout: float) -> None:
         super().__init__()
         self.self_attention_block = self_attention_block
@@ -258,8 +375,8 @@ class DecoderBlock(nn.Module):
     """
     Decoder block consisting of self-attention, cross-attention, and feed-forward layers with residual connections.
     """
-    def __init__(self, features: int, self_attention_block: MultiHeadAttentionBlock,
-                 cross_attention_block: MultiHeadAttentionBlock, feed_forward_block: FeedForwardBlock,
+    def __init__(self, features: int, self_attention_block: LocalAttentionBlock,
+                 cross_attention_block: LocalAttentionBlock, feed_forward_block: FeedForwardBlock,
                  dropout: float) -> None:
         super().__init__()
         self.self_attention_block = self_attention_block
@@ -404,7 +521,7 @@ class Transformer(nn.Module):
         return self.project(x)
 
 def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: float, n_layers: int,
-                      n_heads: int, d_ff: int, factor: int, compress: bool) -> Transformer:
+                      n_heads: int, d_ff: int, factor: int, compress: bool, winsize: int) -> Transformer:
     """
     Builds a transformer model with specified parameters.
     """
@@ -414,7 +531,7 @@ def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: 
 
     encoder_blocks = []
     for _ in range(n_layers):
-        encoder_self_attention_block = MultiHeadAttentionBlock(d_model, n_heads, dropout)
+        encoder_self_attention_block = LocalAttentionBlock(window_size=winsize, d_model=d_model, h=n_heads, dropout=dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         encoder_block = EncoderBlock(d_model, encoder_self_attention_block, feed_forward_block, dropout)
         encoder_blocks.append(encoder_block)
@@ -422,8 +539,8 @@ def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: 
 
     decoder_blocks = []
     for _ in range(n_layers):
-        decoder_self_attention_block = MultiHeadAttentionBlock(d_model, n_heads, dropout)
-        decoder_cross_attention_block = MultiHeadAttentionBlock(d_model, n_heads, dropout)
+        decoder_self_attention_block = LocalAttentionBlock(window_size=winsize, d_model=d_model, h=n_heads, dropout=dropout)
+        decoder_cross_attention_block = LocalAttentionBlock(window_size=winsize, d_model=d_model, h=n_heads, dropout=dropout)
         feed_forward_block = FeedForwardBlock(d_model, d_ff, dropout)
         decoder_block = DecoderBlock(d_model, decoder_self_attention_block, decoder_cross_attention_block,
                                      feed_forward_block, dropout)
