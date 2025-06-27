@@ -8,14 +8,13 @@ class BPETokenizerSimple:
     """A simplified Byte Pair Encoding (BPE) tokenizer implementation."""
 
     def __init__(self):
-        # Vocabulary mapping: token_id -> token string
         self.vocab = {}
-        # Reverse vocabulary mapping: token string -> token_id
         self.inverse_vocab = {}
-        # Stores learned BPE merge rules: (token_id1, token_id2) -> merged_token_id
         self.bpe_merges = {}
+        # Добавляем обязательный токен для неизвестных символов
+        self.special_tokens = {"<unk>", "<|endoftext|>"}
 
-    def train(self, text, vocab_size, allowed_special={"<|endoftext|>"}):
+    def train(self, text, vocab_size, allowed_special={"<|endoftext|>", "<unk>"}):
         """
         Train the tokenizer from scratch using BPE algorithm.
 
@@ -26,23 +25,10 @@ class BPETokenizerSimple:
         """
         # Preprocessing: Replace spaces with 'Ġ' except at start of text
         # This mimics GPT-2's handling of whitespace
-        processed_text = []
-        for i, char in enumerate(text):
-            if char == " " and i != 0:  # Non-leading spaces become 'Ġ'
-                processed_text.append("Ġ")
-            if char != " ":
-                processed_text.append(char)
-        processed_text = "".join(processed_text)
-
+        processed_text = text
         # Initialize vocabulary with base characters
         # Start with all 256 ASCII characters as foundation
-        unique_chars = []
-        # Add any unique characters from text not in ASCII
-        unique_chars.extend(char for char in sorted(set(processed_text))
-                            if char not in unique_chars)
-        # Ensure space replacement character exists
-        if 'Ġ' not in unique_chars:
-            unique_chars.append('Ġ')
+        unique_chars = sorted(set(processed_text))
 
         # Build initial vocab mappings
         self.vocab = {i: char for i, char in tqdm(enumerate(unique_chars))}
@@ -61,14 +47,17 @@ class BPETokenizerSimple:
 
         # BPE training loop: merge frequent pairs until vocab_size reached
         for new_id in tqdm(range(len(self.vocab), vocab_size)):
-            # Find most frequent adjacent token pair
-            pair_id = self.find_freq_pair(token_ids, mode="most")
-            if pair_id is None:  # Stop if no mergable pairs remain
+            pair_id = self.find_freq_pair(token_ids)
+            if pair_id is None:
                 break
-            # Replace all occurrences of pair with new token
-            token_ids = self.replace_pair(token_ids, pair_id, new_id)
-            # Record merge rule
+
+            # Создаем новый токен и сразу добавляем в словарь
+            merged_token = self.vocab[pair_id[0]] + self.vocab[pair_id[1]]
+            self.vocab[new_id] = merged_token
+            self.inverse_vocab[merged_token] = new_id
             self.bpe_merges[pair_id] = new_id
+
+            token_ids = self.replace_pair(token_ids, pair_id, new_id)
 
         # Build vocabulary for merged tokens
         for (p0, p1), new_id in self.bpe_merges.items():
@@ -116,74 +105,51 @@ class BPETokenizerSimple:
                         )] = self.inverse_vocab[merged_token]
 
     def encode(self, text):
-        """
-        Convert text to sequence of token IDs using BPE rules.
-
-        Args:
-            text: Input string to tokenize
-
-        Returns:
-            List of token IDs
-        """
-        tokens = []
-        # Preserve newlines as separate tokens
-        words = text.replace("\n", " \n ").split()
-
-        # Reconstruct tokens with space markers
-        for i, word in enumerate(words):
-            if i > 0 and not word.startswith("\n"):
-                tokens.append("Ġ" + word)  # Mark word continuation
-            else:
-                tokens.append(word)
-
+        # Упрощенная обработка текста
         token_ids = []
-        for token in tokens:
-            if token in self.inverse_vocab:
-                # Use existing token if in vocabulary
-                token_ids.append(self.inverse_vocab[token])
+        for char in text:
+            if char in self.inverse_vocab:
+                token_ids.append(self.inverse_vocab[char])
             else:
-                # Apply BPE subword tokenization
-                token_ids.extend(self.tokenize_with_bpe(token))
+                # Обработка неизвестных символов
+                unk_id = self.inverse_vocab.get("<unk>")
+                if unk_id is not None:
+                    token_ids.append(unk_id)
+                else:
+                    raise ValueError(f"Unknown character: '{char}' and no <unk> token")
 
-        return token_ids
+        # Применяем BPE ко всей последовательности
+        return self.apply_bpe(token_ids)
 
-    def tokenize_with_bpe(self, token):
-        """
-        Apply BPE merges to an unknown token.
+    def apply_bpe(self, token_ids):
+        """Применяет BPE-мержи к последовательности токенов"""
+        # Проверка на неизвестные токены
+        if any(tid not in self.vocab for tid in token_ids):
+            unknown = [tid for tid in token_ids if tid not in self.vocab]
+            raise ValueError(f"Unknown token IDs: {unknown}")
 
-        Args:
-            token: String to tokenize
-
-        Returns:
-            List of subword token IDs
-        """
-        # Start with character-level tokenization
-        token_ids = [self.inverse_vocab.get(char) for char in token]
-        # Validate all characters are known
-        if None in token_ids:
-            missing = [char for char, tid in zip(token, token_ids) if tid is None]
-            raise ValueError(f"Unknown characters: {missing}")
-
-        # Apply merge rules greedily until no more merges possible
-        can_merge = True
-        while can_merge and len(token_ids) > 1:
-            can_merge = False
+        # Применяем мержи, пока возможно
+        changed = True
+        while changed and len(token_ids) > 1:
+            changed = False
             new_tokens = []
             i = 0
-            # Iterate through token pairs
+
             while i < len(token_ids) - 1:
                 pair = (token_ids[i], token_ids[i + 1])
-                # Check if merge rule exists
+
                 if pair in self.bpe_merges:
                     new_tokens.append(self.bpe_merges[pair])
-                    i += 2  # Skip merged token
-                    can_merge = True
+                    i += 2  # Пропускаем объединенную пару
+                    changed = True
                 else:
                     new_tokens.append(token_ids[i])
                     i += 1
-            # Add last token if exists
+
+            # Добавляем последний токен
             if i < len(token_ids):
                 new_tokens.append(token_ids[i])
+
             token_ids = new_tokens
 
         return token_ids
