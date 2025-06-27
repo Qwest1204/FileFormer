@@ -11,115 +11,180 @@ class BPETokenizerSimple:
         self.vocab = {}
         self.inverse_vocab = {}
         self.bpe_merges = {}
-        # Добавляем обязательный токен для неизвестных символов
-        self.special_tokens = {"<unk>", "<|endoftext|>"}
+        self.merge_priority = []  # Хранить порядок слияний для применения
+        self.special_tokens = {"<unk>", "<|endoftext|>", "<mask>"}
 
-    def train(self, text, vocab_size, allowed_special={"<|endoftext|>", "<unk>"}):
-        """
-        Train the tokenizer from scratch using BPE algorithm.
+    def train(self, text, vocab_size, allowed_special={"<|endoftext|>", "<unk>", "<mask>"}):
+        # Инициализация порядка слияний
+        self.merge_priority = []
 
-        Args:
-            text: Raw training text
-            vocab_size: Target vocabulary size
-            allowed_special: Special tokens to preserve in vocabulary
-        """
-        # Preprocessing: Replace spaces with 'Ġ' except at start of text
-        # This mimics GPT-2's handling of whitespace
+        # Обработка текста
         processed_text = text
-        # Initialize vocabulary with base characters
-        # Start with all 256 ASCII characters as foundation
         unique_chars = sorted(set(processed_text))
 
-        # Build initial vocab mappings
-        self.vocab = {i: char for i, char in tqdm(enumerate(unique_chars))}
+        # Инициализация словаря
+        self.vocab = {i: char for i, char in enumerate(unique_chars)}
         self.inverse_vocab = {char: i for i, char in self.vocab.items()}
 
-        # Add special tokens if not already present
+        # Добавление специальных токенов
         if allowed_special:
-            for token in tqdm(allowed_special):
+            for token in allowed_special:
                 if token not in self.inverse_vocab:
                     new_id = len(self.vocab)
                     self.vocab[new_id] = token
                     self.inverse_vocab[token] = new_id
 
-        # Convert processed text to initial token IDs
-        token_ids = [self.inverse_vocab[char] for char in tqdm(processed_text)]
+        # Конвертация в ID
+        token_ids = [self.inverse_vocab[char] for char in processed_text]
 
-        # BPE training loop: merge frequent pairs until vocab_size reached
-        for new_id in tqdm(range(len(self.vocab), vocab_size)):
+        # Обучение BPE
+        for new_id in range(len(self.vocab), vocab_size):
             pair_id = self.find_freq_pair(token_ids)
             if pair_id is None:
                 break
 
-            # Создаем новый токен и сразу добавляем в словарь
+            # Регистрация слияния
             merged_token = self.vocab[pair_id[0]] + self.vocab[pair_id[1]]
             self.vocab[new_id] = merged_token
             self.inverse_vocab[merged_token] = new_id
             self.bpe_merges[pair_id] = new_id
+            self.merge_priority.append(pair_id)  # Сохраняем порядок
 
+            # Замена пар
             token_ids = self.replace_pair(token_ids, pair_id, new_id)
 
-        # Build vocabulary for merged tokens
-        for (p0, p1), new_id in self.bpe_merges.items():
-            merged_token = self.vocab[p0] + self.vocab[p1]
-            self.vocab[new_id] = merged_token
-            self.inverse_vocab[merged_token] = new_id
-
     def load_vocab_and_merges_from_openai(self, vocab_path, bpe_merges_path):
-        """
-        Load pre-trained GPT-2 vocabulary and merge rules.
+        self.merge_priority = []  # Сброс порядка слияний
 
-        Args:
-            vocab_path: Path to 'encoder.json' vocabulary file
-            bpe_merges_path: Path to 'vocab.bpe' merge rules file
-        """
-        # Load vocabulary file (token -> id mapping)
-        with open(vocab_path, "r", encoding="utf-8") as file:
-            loaded_vocab = json.load(file)
-            # Create id->token and token->id mappings
+        # Загрузка словаря
+        with open(vocab_path, "r", encoding="utf-8") as f:
+            loaded_vocab = json.load(f)
             self.vocab = {int(v): k for k, v in loaded_vocab.items()}
             self.inverse_vocab = {k: int(v) for k, v in loaded_vocab.items()}
 
-        # Load BPE merge rules
-        with open(bpe_merges_path, "r", encoding="utf-8") as file:
-            lines = file.readlines()
-            # Skip version header if present
-            if lines and lines[0].startswith("#"):
-                lines = lines[1:]
+        # Загрузка правил слияния
+        with open(bpe_merges_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()[1:]  # Пропуск заголовка
 
-            for rank, line in enumerate(lines):
-                pair = tuple(line.strip().split())
-                if len(pair) != 2:
-                    continue  # Skip malformed lines
-
-                token1, token2 = pair
-                # Check if both tokens exist in vocabulary
+            for line in lines:
+                token1, token2 = line.strip().split()
                 if token1 in self.inverse_vocab and token2 in self.inverse_vocab:
+                    id1 = self.inverse_vocab[token1]
+                    id2 = self.inverse_vocab[token2]
                     merged_token = token1 + token2
-                    # Verify merged token exists in vocab
+
                     if merged_token in self.inverse_vocab:
-                        # Record merge rule
-                        self.bpe_merges[(
-                            self.inverse_vocab[token1],
-                            self.inverse_vocab[token2]
-                        )] = self.inverse_vocab[merged_token]
+                        merged_id = self.inverse_vocab[merged_token]
+                        pair = (id1, id2)
+                        self.bpe_merges[pair] = merged_id
+                        self.merge_priority.append(pair)  # Сохраняем порядок
 
     def encode(self, text):
-        # Упрощенная обработка текста
-        token_ids = []
-        for char in text:
-            if char in self.inverse_vocab:
-                token_ids.append(self.inverse_vocab[char])
-            else:
-                # Обработка неизвестных символов
-                unk_id = self.inverse_vocab.get("<unk>")
-                if unk_id is not None:
-                    token_ids.append(unk_id)
-                else:
-                    raise ValueError(f"Unknown character: '{char}' and no <unk> token")
+        # Разделение текста на части с учетом специальных токенов
+        parts = self.split_text_by_special_tokens(text)
 
-        # Применяем BPE ко всей последовательности
+        token_ids = []
+        for part in parts:
+            if part in self.special_tokens:
+                # Обработка специального токена
+                token_id = self.inverse_vocab.get(part)
+                if token_id is not None:
+                    token_ids.append(token_id)
+                else:
+                    token_ids.append(self.handle_unknown(part))
+            else:
+                # Обработка обычного текста
+                for char in part:
+                    if char in self.inverse_vocab:
+                        token_ids.append(self.inverse_vocab[char])
+                    else:
+                        token_ids.append(self.handle_unknown(char))
+
+        # Применение BPE
         return self.apply_bpe(token_ids)
+
+    def split_text_by_special_tokens(self, text):
+        """Разделяет текст на части, выделяя специальные токены."""
+        parts = []
+        start = 0
+        while start < len(text):
+            found = False
+            # Поиск самого длинного совпадения специального токена
+            for token in sorted(self.special_tokens, key=len, reverse=True):
+                end = start + len(token)
+                if text.startswith(token, start, end):
+                    # Добавление текста до токена
+                    if start > 0:
+                        parts.append(text[:start])
+                    parts.append(token)
+                    text = text[end:]
+                    found = True
+                    break
+            if not found:
+                start += 1
+        if text:
+            parts.append(text)
+        return parts
+
+    def handle_unknown(self, char):
+        """Обработка неизвестных символов."""
+        unk_id = self.inverse_vocab.get("<unk>")
+        if unk_id is not None:
+            return unk_id
+        raise ValueError(f"Unknown character: '{char}' and no <unk> token")
+
+    def apply_bpe(self, token_ids):
+        """Применяет слияния в правильном порядке."""
+        for pair in self.merge_priority:
+            if pair not in self.bpe_merges:
+                continue
+            new_id = self.bpe_merges[pair]
+            new_tokens = []
+            i = 0
+            while i < len(token_ids):
+                if i < len(token_ids) - 1 and (token_ids[i], token_ids[i + 1]) == pair:
+                    new_tokens.append(new_id)
+                    i += 2
+                else:
+                    new_tokens.append(token_ids[i])
+                    i += 1
+            token_ids = new_tokens
+        return token_ids
+
+    def save_vocab_and_merges(self, vocab_path, bpe_merges_path):
+        # Сохранение словаря
+        with open(vocab_path, "w", encoding="utf-8") as f:
+            json.dump({k: v for k, v in self.vocab.items()},
+                      f, ensure_ascii=False, indent=2)
+
+        # Сохранение правил слияния с порядком
+        with open(bpe_merges_path, "w", encoding="utf-8") as f:
+            merges_list = [
+                {"pair": list(pair), "new_id": self.bpe_merges[pair]}
+                for pair in self.merge_priority
+            ]
+            json.dump(merges_list, f, ensure_ascii=False, indent=2)
+
+    def load_vocab_and_merges(self, vocab_path, bpe_merges_path):
+        # Загрузка словаря
+        with open(vocab_path, "r", encoding="utf-8") as f:
+            loaded_vocab = json.load(f)
+            self.vocab = {int(k): v for k, v in loaded_vocab.items()}
+            self.inverse_vocab = {v: int(k) for k, v in loaded_vocab.items()}
+
+        # Загрузка правил слияния с сохранением порядка
+        self.merge_priority = []
+        self.bpe_merges = {}
+        with open(bpe_merges_path, "r", encoding="utf-8") as f:
+            merges_list = json.load(f)
+            for merge in merges_list:
+                pair = tuple(merge['pair'])
+                new_id = merge['new_id']
+                self.merge_priority.append(pair)
+                self.bpe_merges[pair] = new_id
+
+    # Остальные методы остаются без изменений (decode, find_freq_pair, replace_pair и т.д.)
+    # ... (реализация decode, find_freq_pair, replace_pair, get_special_token_id остается прежней)
 
     def apply_bpe(self, token_ids):
         """Применяет BPE-мержи к последовательности токенов"""
