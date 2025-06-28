@@ -10,8 +10,8 @@ class FileDataset(Dataset):
         self.tokenizer = tokenizer
         self.files = [x for x in Path(path).glob('**/*') if x.is_file()]
         self.max_seq_length = max_seq_length
-        self.pad_token = self.tokenizer.get_special_token_id("<|PAD|>")
-        self.mask_token = self.tokenizer.get_special_token_id("<|MASK|>")
+        self.pad_token = self.tokenizer.get_special_token_id("<pad>")
+        self.mask_token = self.tokenizer.get_special_token_id("<mask>")
         self.data = self.prepare(self.files)
 
     @staticmethod

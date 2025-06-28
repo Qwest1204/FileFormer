@@ -12,9 +12,9 @@ class BPETokenizerSimple:
         self.inverse_vocab = {}
         self.bpe_merges = {}
         self.merge_priority = []  # Хранить порядок слияний для применения
-        self.special_tokens = {"<unk>", "<|endoftext|>", "<mask>"}
+        self.special_tokens = {"<unk>", "<|endoftext|>", "<mask>", "<pad>"}
 
-    def train(self, text, vocab_size, allowed_special={"<|endoftext|>", "<unk>", "<mask>"}):
+    def train(self, text, vocab_size, allowed_special={"<|endoftext|>", "<unk>", "<mask>", "<pad>"}):
         # Инициализация порядка слияний
         self.merge_priority = []
 
