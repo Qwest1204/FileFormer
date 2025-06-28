@@ -13,7 +13,6 @@ os.environ['TORCH_USE_CUDA_DSA'] = "1"
 
 print("# ========================")
 print("# Конфигурация")
-print("# ========================")
 EPOCHS = 20
 BATCH_SIZE = 1
 SEQ_LEN = 2048
@@ -26,9 +25,7 @@ PAD_TOKEN_ID = 20  # Убедитесь, что ID соответствует pa
 # Создать директорию для сохранения моделей
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-print("# ========================")
 print("# Инициализация данных")
-print("# ========================")
 tokenizer = Tokenizer()
 tokenizer.load_vocab_and_merges('vocab.json', 'merges.txt')
 dataset = FileDataset("/home/qwest/app/", SEQ_LEN, tokenizer)
@@ -36,11 +33,9 @@ torch.save(dataset, "dataset1.pt")
 #dataset = torch.load("dataset.pt", weights_only=False)
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
-print("# ========================")
 print("# Инициализация моделей")
-print("# ========================")
 model_config_base = {
-    "vocab_size": 5772,
+    "vocab_size": 5777,
     "max_seq_len": SEQ_LEN,
     "dropout": 0.1
 }
@@ -67,16 +62,14 @@ correction_data = build_transformer(
 
 up_net = UpscaleNet().to(DEVICE)
 
-print("# ========================")
 print("Оптимизация и планировщик")
-print("# ========================")
 all_params = list(transformer_correction.parameters()) + \
              list(correction_data.parameters()) + \
              list(up_net.parameters())
 
 optimizer = optim.AdamW(all_params, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, mode='min', factor=0.5, patience=3
+    optimizer, mode='min', factor=0.1, patience=3
 )
 criterion = nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID)
 
@@ -100,9 +93,7 @@ def validate_tensor(tensor, name, vocab_size=None):
         if unique_vals.max() >= vocab_size:
             raise ValueError(f"Value > vocab_size ({vocab_size}) in {name}: max={unique_vals.max()}")
 
-# ========================
-# Обучение
-# ========================
+print('# Обучение')
 best_loss = float('inf')
 start_epoch = 0
 timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -131,8 +122,8 @@ for epoch in range(start_epoch, EPOCHS):
             # =====================================
             # ДОБАВЛЕННЫЕ ПРОВЕРКИ ДАННЫХ
             # =====================================
-            validate_tensor(origin_ids, "origin_ids", vocab_size=5772)
-            validate_tensor(masked_ids, "masked_ids", vocab_size=5772)
+            validate_tensor(origin_ids, "origin_ids", vocab_size=5777)
+            validate_tensor(masked_ids, "masked_ids", vocab_size=5777)
             validate_tensor(attention_mask, "attention_mask")
 
             # Forward pass
