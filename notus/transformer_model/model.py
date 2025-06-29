@@ -2,6 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import matplotlib.pyplot as plt
+from typing import Dict, List
+from typing import Optional
 
 class UpscaleNet(nn.Module):
     def __init__(self):
@@ -171,16 +174,12 @@ class MultiHeadAttentionBlock(nn.Module):
         value = value.view(value.shape[0], value.shape[1], self.h, self.d_k).transpose(1, 2)
 
         x, self.attention_scores = MultiHeadAttentionBlock.attention(query, key, value, mask, self.dropout)
-
+        self.attn_weights = self.attention_scores.detach()
         x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
         return self.w_o(x)
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
-from typing import Optional
+
 
 
 class LocalAttentionBlock(nn.Module):
@@ -253,7 +252,7 @@ class LocalAttentionBlock(nn.Module):
         # Normalize and apply dropout
         attn_weights = F.softmax(attn_scores, dim=-1)
         attn_weights = self.dropout(attn_weights)
-
+        self.attn_weights = attn_weights.detach()
         # Apply attention weights to values
         x = torch.matmul(attn_weights, value)
         x = x.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
@@ -516,8 +515,97 @@ class Transformer(nn.Module):
         x = self.decode(x, src_mask)
         return self.project(x)
 
+
+class AttentionVisualizer:
+    def __init__(self):
+        self.attention_weights = {}
+        self.hooks = []
+        self.layer_names = []
+        self.module_to_name = {}  # Сопоставление модулей с именами
+
+    def _hook_fn(self, module, input, output):
+        try:
+            attn_weights = None
+
+            # Пытаемся получить веса внимания разными способами
+            if hasattr(module, 'attn_weights') and module.attn_weights is not None:
+                attn_weights = module.attn_weights
+            elif hasattr(module, 'attention_scores') and module.attention_scores is not None:
+                attn_weights = module.attention_scores
+            elif isinstance(output, tuple) and len(output) == 2:
+                attn_weights = output[1]
+
+            if attn_weights is None:
+                return
+            print(f"Хук сработал для: {module}, weights found: {attn_weights is not None}")
+            # Используем имя модуля из сопоставления
+            if module in self.module_to_name:
+                layer_id = self.module_to_name[module]
+            else:
+                layer_type = module.__class__.__name__
+                layer_id = f"{layer_type}_{len(self.layer_names)}"
+                self.module_to_name[module] = layer_id
+                self.layer_names.append(layer_id)
+
+            # Сохраняем веса
+            self.attention_weights[layer_id] = attn_weights.detach().cpu()
+
+        except Exception as e:
+            print(f"Ошибка в хуке: {e}")
+
+    def register_hooks(self, model: nn.Module):
+        """Регистрация хуков с сохранением имён модулей"""
+        self.module_to_name = {}
+        for name, module in model.named_modules():
+            if isinstance(module, (MultiHeadAttentionBlock, LocalAttentionBlock)):
+                self.module_to_name[module] = name
+                hook = module.register_forward_hook(self._hook_fn)
+                self.hooks.append(hook)
+                print(f"Зарегистрирован хук для: {name}")
+
+
+    def print_available_layers(self):
+        """Печать всех доступных слоёв с весами внимания"""
+        print("\nДоступные слои для визуализации:")
+        for i, name in enumerate(self.layer_names):
+            print(f"{i}: {name}")
+
+    def visualize(self, layer_id, head: int = 0, save_path: str = None):
+        """
+        Визуализация весов внимания для выбранного слоя и головы
+
+        Args:
+            layer_id: ID слоя (число или имя)
+            head: Номер головы для отображения
+        """
+        # Преобразуем числовой ID в имя
+        if isinstance(layer_id, int):
+            layer_id = self.layer_names[layer_id] if layer_id < len(self.layer_names) else None
+
+        if layer_id not in self.attention_weights:
+            print(f"Слой {layer_id} не найден. Доступные слои:")
+            self.print_available_layers()
+            return
+
+        attn = self.attention_weights[layer_id]
+        print(f"Форма весов внимания для {layer_id}: {attn.shape}")
+
+        # Выбор батча 0 и указанной головы
+        attn_matrix = attn[0, head]
+
+        plt.figure(figsize=(10, 8))
+        plt.imshow(attn_matrix, cmap='viridis', interpolation='nearest')
+        plt.colorbar()
+        plt.title(f"Attention: {layer_id} - Head {head}")
+        plt.xlabel("Key Positions")
+        plt.ylabel("Query Positions")
+
+        if save_path:
+            plt.savefig(save_path, bbox_inches='tight')
+        plt.show()
+
 def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: float, n_layers: int,
-                      n_heads: int, d_ff: int, factor: int, compress: bool, winsize: int) -> Transformer:
+                      n_heads: int, d_ff: int, factor: int, compress: bool, winsize: int, return_attention: bool) -> Transformer:
     """
     Builds a transformer model with specified parameters.
     """
@@ -559,6 +647,11 @@ def build_transformer(vocab_size: int, d_model: int, max_seq_len: int, dropout: 
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
     # Initializes model parameters with Xavier uniform initialization.
+
+    if return_attention:
+        # Создаем атрибут для сбора внимания
+        transformer.attention_visualizer = AttentionVisualizer()
+        transformer.attention_visualizer.register_hooks(transformer)
 
     return transformer
     # Returns the constructed transformer model.
