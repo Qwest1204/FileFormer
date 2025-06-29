@@ -1,0 +1,30 @@
+{
+  "models": {
+    "err_correction": {
+      "vocab_size": 6542,
+      "max_seq_len": 2048,
+      "dropout": 0.1,
+      "d_model": 1024,
+      "d_ff": 1024,
+      "n_layers": 4,
+      "n_heads": 4,
+      "factor": 1,
+      "compress": "False",
+      "winsize": 64,
+      "return_attention": "False"
+    },
+    "embedder": {
+      "vocab_size": 6542,
+      "max_seq_len": 2048,
+      "dropout": 0.1,
+      "d_model": 32,
+      "d_ff": 32,
+      "n_layers": 8,
+      "n_heads": 8,
+      "factor": 128,
+      "compress": "True",
+      "winsize": 32,
+      "return_attention": "False"
+    }
+  }
+}
