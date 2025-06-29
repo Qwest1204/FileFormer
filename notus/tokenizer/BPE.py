@@ -173,13 +173,6 @@ class BPETokenizerSimple:
                 self.merge_priority.append(pair)
                 self.bpe_merges[pair] = new_id
 
-    # Остальные методы остаются без изменений (decode, find_freq_pair, replace_pair и т.д.)
-    # ... (реализация decode, find_freq_pair, replace_pair, get_special_token_id остается прежней)
-
-
-
-
-
     def decode(self, token_ids):
         """
         Convert token IDs back to text string.
