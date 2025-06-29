@@ -14,8 +14,42 @@ class BPETokenizerSimple:
         self.merge_priority = []  # Хранить порядок слияний для применения
         self.special_tokens = {"<unk>", "<|endoftext|>", "<mask>", "<pad>"}
 
-    def train(self, text, vocab_size, allowed_special={"<|endoftext|>", "<unk>", "<mask>", "<pad>"}):
+    def apply_bpe(self, token_ids):
+        """Применяет BPE-мержи к последовательности токенов"""
+        # Проверка на неизвестные токены
+        if any(tid not in self.vocab for tid in token_ids):
+            unknown = [tid for tid in token_ids if tid not in self.vocab]
+            raise ValueError(f"Unknown token IDs: {unknown}")
+
+        # Применяем мержи, пока возможно
+        changed = True
+        while changed and len(token_ids) > 1:
+            changed = False
+            new_tokens = []
+            i = 0
+
+            while i < len(token_ids) - 1:
+                pair = (token_ids[i], token_ids[i + 1])
+
+                if pair in self.bpe_merges:
+                    new_tokens.append(self.bpe_merges[pair])
+                    i += 2  # Пропускаем объединенную пару
+                    changed = True
+                else:
+                    new_tokens.append(token_ids[i])
+                    i += 1
+            # Добавляем последний токен
+            if i < len(token_ids):
+                new_tokens.append(token_ids[i])
+
+            token_ids = new_tokens
+
+        return token_ids
+
+    def train(self, text, vocab_size, allowed_special=None):
         # Инициализация порядка слияний
+        if allowed_special is None:
+            allowed_special = {"<|endoftext|>", "<unk>", "<mask>", "<pad>"}
         self.merge_priority = []
 
         # Обработка текста
@@ -52,32 +86,6 @@ class BPETokenizerSimple:
 
             # Замена пар
             token_ids = self.replace_pair(token_ids, pair_id, new_id)
-
-    def load_vocab_and_merges_from_openai(self, vocab_path, bpe_merges_path):
-        self.merge_priority = []  # Сброс порядка слияний
-
-        # Загрузка словаря
-        with open(vocab_path, "r", encoding="utf-8") as f:
-            loaded_vocab = json.load(f)
-            self.vocab = {int(v): k for k, v in loaded_vocab.items()}
-            self.inverse_vocab = {k: int(v) for k, v in loaded_vocab.items()}
-
-        # Загрузка правил слияния
-        with open(bpe_merges_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()[1:]  # Пропуск заголовка
-
-            for line in lines:
-                token1, token2 = line.strip().split()
-                if token1 in self.inverse_vocab and token2 in self.inverse_vocab:
-                    id1 = self.inverse_vocab[token1]
-                    id2 = self.inverse_vocab[token2]
-                    merged_token = token1 + token2
-
-                    if merged_token in self.inverse_vocab:
-                        merged_id = self.inverse_vocab[merged_token]
-                        pair = (id1, id2)
-                        self.bpe_merges[pair] = merged_id
-                        self.merge_priority.append(pair)  # Сохраняем порядок
 
     def encode(self, text):
         # Разделение текста на части с учетом специальных токенов
@@ -133,24 +141,6 @@ class BPETokenizerSimple:
             return unk_id
         raise ValueError(f"Unknown character: '{char}' and no <unk> token")
 
-    def apply_bpe(self, token_ids):
-        """Применяет слияния в правильном порядке."""
-        for pair in self.merge_priority:
-            if pair not in self.bpe_merges:
-                continue
-            new_id = self.bpe_merges[pair]
-            new_tokens = []
-            i = 0
-            while i < len(token_ids):
-                if i < len(token_ids) - 1 and (token_ids[i], token_ids[i + 1]) == pair:
-                    new_tokens.append(new_id)
-                    i += 2
-                else:
-                    new_tokens.append(token_ids[i])
-                    i += 1
-            token_ids = new_tokens
-        return token_ids
-
     def save_vocab_and_merges(self, vocab_path, bpe_merges_path):
         # Сохранение словаря
         with open(vocab_path, "w", encoding="utf-8") as f:
@@ -165,7 +155,7 @@ class BPETokenizerSimple:
             ]
             json.dump(merges_list, f, ensure_ascii=False, indent=2)
 
-    def load_vocab_and_merges(self, vocab_path, bpe_merges_path):
+    def load_vocab_and_merges(self, vocab_path='.vocab.json', bpe_merges_path='.merges.txt'):
         # Загрузка словаря
         with open(vocab_path, "r", encoding="utf-8") as f:
             loaded_vocab = json.load(f)
@@ -186,38 +176,9 @@ class BPETokenizerSimple:
     # Остальные методы остаются без изменений (decode, find_freq_pair, replace_pair и т.д.)
     # ... (реализация decode, find_freq_pair, replace_pair, get_special_token_id остается прежней)
 
-    def apply_bpe(self, token_ids):
-        """Применяет BPE-мержи к последовательности токенов"""
-        # Проверка на неизвестные токены
-        if any(tid not in self.vocab for tid in token_ids):
-            unknown = [tid for tid in token_ids if tid not in self.vocab]
-            raise ValueError(f"Unknown token IDs: {unknown}")
 
-        # Применяем мержи, пока возможно
-        changed = True
-        while changed and len(token_ids) > 1:
-            changed = False
-            new_tokens = []
-            i = 0
 
-            while i < len(token_ids) - 1:
-                pair = (token_ids[i], token_ids[i + 1])
 
-                if pair in self.bpe_merges:
-                    new_tokens.append(self.bpe_merges[pair])
-                    i += 2  # Пропускаем объединенную пару
-                    changed = True
-                else:
-                    new_tokens.append(token_ids[i])
-                    i += 1
-
-            # Добавляем последний токен
-            if i < len(token_ids):
-                new_tokens.append(token_ids[i])
-
-            token_ids = new_tokens
-
-        return token_ids
 
     def decode(self, token_ids):
         """
@@ -240,36 +201,6 @@ class BPETokenizerSimple:
             token = self.vocab[token_id]
             decoded_string += token
         return decoded_string
-
-    def save_vocab_and_merges(self, vocab_path, bpe_merges_path):
-        """Save vocabulary and merge rules to JSON files."""
-        # Save vocabulary (id->token mapping)
-        with open(vocab_path, "w", encoding="utf-8") as file:
-            json.dump({k: v for k, v in self.vocab.items()},
-                      file, ensure_ascii=False, indent=2)
-
-        # Save merge rules as list of dictionaries
-        with open(bpe_merges_path, "w", encoding="utf-8") as file:
-            merges_list = [
-                {"pair": list(pair), "new_id": new_id}
-                for pair, new_id in self.bpe_merges.items()
-            ]
-            json.dump(merges_list, file, ensure_ascii=False, indent=2)
-
-    def load_vocab_and_merges(self, vocab_path, bpe_merges_path):
-        """Load vocabulary and merge rules from JSON files."""
-        # Load vocabulary
-        with open(vocab_path, "r", encoding="utf-8") as file:
-            loaded_vocab = json.load(file)
-            self.vocab = {int(k): v for k, v in loaded_vocab.items()}
-            self.inverse_vocab = {v: int(k) for k, v in loaded_vocab.items()}
-
-        # Load merge rules
-        with open(bpe_merges_path, "r", encoding="utf-8") as file:
-            merges_list = json.load(file)
-            for merge in merges_list:
-                pair = tuple(merge['pair'])
-                self.bpe_merges[pair] = merge['new_id']
 
     @lru_cache(maxsize=None)
     def get_special_token_id(self, token):
