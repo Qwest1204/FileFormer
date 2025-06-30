@@ -6,35 +6,49 @@ import matplotlib.pyplot as plt
 from typing import Dict, List
 from typing import Optional
 
+
 class UpscaleNet(nn.Module):
+    class ReshapeUpscale(nn.Module):
+        def __init__(self, out_ch):
+            super().__init__()
+            self.out_ch = out_ch
+
+        def forward(self, x):
+            # Преобразование: [batch, L, in_features] -> [batch, 2*L, out_ch]
+            return x.view(x.size(0), x.size(1) * 2, self.out_ch)
+
     def __init__(self):
         super().__init__()
-        # Последовательность слоёв
         self.layers = nn.Sequential(
-            # Этап 1: Увеличение каналов (16 -> 64)
-            nn.Conv1d(16, 64, kernel_size=3, padding=1),
+            # Этап 1: Увеличение каналов (16 -> 64) без изменения длины
+            nn.Linear(16, 64),
             nn.GELU(),
 
-            # Этап 2: Удвоение длины (32 -> 64)
-            nn.ConvTranspose1d(64, 128, kernel_size=4, stride=2, padding=1),
+            # Этап 2: Удвоение длины (32 -> 64) и каналов (64 -> 128)
+            nn.Linear(64, 128 * 2),
+            self.ReshapeUpscale(128),
             nn.GELU(),
 
-            # Повторить 5 раз (64 -> 128 -> 256 -> 512 -> 1024 -> 2048)
+            # Последовательные блоки увеличения длины
             *self._make_upscale_block(128, 256),  # 64 -> 128
             *self._make_upscale_block(256, 512),  # 128 -> 256
-            *self._make_upscale_block(512, 1024), # 256 -> 512
-            #*self._make_upscale_block(1024, 2048), # 512 -> 1024
-            #*self._make_upscale_block(2048, 2048)  # 1024 -> 2048 (каналы)
+            *self._make_upscale_block(512, 1024),
+            *self._make_upscale_block(1024, 2048)  # 256 -> 512
         )
 
     def _make_upscale_block(self, in_ch, out_ch):
         return [
-            nn.ConvTranspose1d(in_ch, out_ch, kernel_size=4, stride=2, padding=1),
+            nn.Linear(in_ch, out_ch * 2),
+            self.ReshapeUpscale(out_ch),
             nn.ReLU()
         ]
 
     def forward(self, x):
-        return self.layers(x)
+        # Вход:  [batch, 16, 32]
+        x = x.permute(0, 2, 1)  # -> [batch, 32, 16]
+        x = self.layers(x)
+        x = x.permute(0, 2, 1)  # -> [batch, 1024, 512]
+        return x
 
 class LayerNormalization(nn.Module):
     """
@@ -178,10 +192,6 @@ class MultiHeadAttentionBlock(nn.Module):
         x = x.transpose(1, 2).contiguous().view(x.shape[0], -1, self.h * self.d_k)
         return self.w_o(x)
 
-
-
-
-
 class LocalAttentionBlock(nn.Module):
     """
     Multi-head attention with local attention window.
@@ -287,6 +297,7 @@ class LocalAttentionBlock(nn.Module):
         mask = mask.float()
 
         return mask.unsqueeze(0).unsqueeze(0)  # (1, 1, seq_len, seq_len)
+
 class EncoderBlock(nn.Module):
     """
     Encoder block consisting of self-attention and feed-forward layers with residual connections.
