@@ -12,7 +12,7 @@ class BPETokenizerSimple:
         self.inverse_vocab = {}
         self.bpe_merges = {}
         self.merge_priority = []  # Хранить порядок слияний для применения
-        self.special_tokens = {"<unk>", "<|endoftext|>", "<mask>", "<pad>"}
+        self.special_tokens = {"<unk>", "<sos>", "<mask>", "<pad>", "<eos>", "<eof>", "<sof>", "<t1>", "<t2>", "<t3>", "<t4>"}
 
     def apply_bpe(self, token_ids):
         """Применяет BPE-мержи к последовательности токенов"""
@@ -49,7 +49,7 @@ class BPETokenizerSimple:
     def train(self, text, vocab_size, allowed_special=None):
         # Инициализация порядка слияний
         if allowed_special is None:
-            allowed_special = {"<|endoftext|>", "<unk>", "<mask>", "<pad>"}
+            allowed_special = {"<unk>", "<sos>", "<mask>", "<pad>", "<eos>", "<eof>", "<sof>", "<t1>", "<t2>", "<t3>", "<t4>"}
         self.merge_priority = []
 
         # Обработка текста
