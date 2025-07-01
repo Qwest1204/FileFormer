@@ -5,44 +5,6 @@ import math
 import matplotlib.pyplot as plt
 from typing import Dict, List, Optional, Tuple
 
-
-class UpscaleNet(nn.Module):
-    class ReshapeUpscale(nn.Module):
-        def __init__(self, out_ch):
-            super().__init__()
-            self.out_ch = out_ch
-
-        def forward(self, x):
-            return x.view(x.size(0), x.size(1) * 2, self.out_ch)
-
-    def __init__(self):
-        super().__init__()
-        self.layers = nn.Sequential(
-            nn.Linear(16, 64),
-            nn.GELU(),
-            nn.Linear(64, 128 * 2),
-            self.ReshapeUpscale(128),
-            nn.GELU(),
-            *self._make_upscale_block(128, 256),
-            *self._make_upscale_block(256, 512),
-            *self._make_upscale_block(512, 1024),
-            *self._make_upscale_block(1024, 2048)
-        )
-
-    def _make_upscale_block(self, in_ch, out_ch):
-        return [
-            nn.Linear(in_ch, out_ch * 2),
-            self.ReshapeUpscale(out_ch),
-            nn.GELU()
-        ]
-
-    def forward(self, x):
-        x = x.permute(0, 2, 1)
-        x = self.layers(x)
-        x = x.permute(0, 2, 1)
-        return x
-
-
 class InputEmbeddings(nn.Module):
     def __init__(self, d_model: int, vocab_size: int) -> None:
         super().__init__()
@@ -240,85 +202,13 @@ class EncoderCompress(nn.Module):
         return x_compressed + residual
 
 
-class DecoderBlock(nn.Module):
-    def __init__(self, features: int, self_attention: MultiHeadAttention,
-                 cross_attention: MultiHeadAttention, feed_forward: FeedForwardBlock,
-                 dropout: float) -> None:
-        super().__init__()
-        self.self_attention = self_attention
-        self.cross_attention = cross_attention
-        self.feed_forward = feed_forward
-        self.residual1 = ResidualConnection(features, dropout)
-        self.residual2 = ResidualConnection(features, dropout)
-        self.residual3 = ResidualConnection(features, dropout)
-
-    def forward(self, x, encoder_output, src_mask, tgt_mask):
-        x = self.residual1(x, lambda x: self.self_attention(x, x, x, tgt_mask))
-        x = self.residual2(x, lambda x: self.cross_attention(x, encoder_output, encoder_output, src_mask))
-        x = self.residual3(x, self.feed_forward)
-        return x
-
-
-class Decoder(nn.Module):
-    def __init__(self, features: int, layers: nn.ModuleList) -> None:
-        super().__init__()
-        self.layers = layers
-        self.norm = nn.LayerNorm(features)
-
-    def forward(self, x, encoder_output, src_mask, tgt_mask):
-        for layer in self.layers:
-            x = layer(x, encoder_output, src_mask, tgt_mask)
-        return self.norm(x)
-
-
-class DecoderExpand(nn.Module):
-    def __init__(self, features: int, layers: nn.ModuleList, expand_factor: int = 2) -> None:
-        super().__init__()
-        self.layers = layers
-        self.norm = nn.LayerNorm(features)
-        self.expand_factor = expand_factor
-        self.expand = nn.Sequential(
-            nn.ConvTranspose1d(
-                in_channels=features,
-                out_channels=features,
-                kernel_size=expand_factor,
-                stride=expand_factor,
-                padding=0
-            ),
-            nn.GELU()
-        )
-
-    def forward(self, x, encoder_output, src_mask, tgt_mask):
-        batch, seq_len, d_model = x.shape
-        x = x.permute(0, 2, 1)
-        x = self.expand(x)
-        x = x.permute(0, 2, 1)
-
-        for layer in self.layers:
-            x = layer(x, encoder_output, src_mask, tgt_mask)
-
-        return self.norm(x)
-
-
-class ProjectionLayer(nn.Module):
-    def __init__(self, d_model: int, vocab_size: int) -> None:
-        super().__init__()
-        self.proj = nn.Linear(d_model, vocab_size)
-
-    def forward(self, x):
-        return self.proj(x)
-
-
 class Transformer(nn.Module):
-    def __init__(self, encoder: nn.Module, decoder: nn.Module,
-                 src_embed: InputEmbeddings, src_pos: PositionalEncoding,
-                 projection: ProjectionLayer, compress: bool) -> None:
+    def __init__(self, encoder: nn.Module,
+                 src_embed: InputEmbeddings, src_pos: PositionalEncoding, compress: bool) -> None:
         super().__init__()
         self.encoder = encoder
-        self.decoder = decoder
         self.src_embed = src_embed
         self.src_pos = src_pos
-        self.projection = projection
         self.compress = compress
 
     def encode(self, src: torch.Tensor, src_mask: Optional[torch.Tensor]) -> torch.Tensor:
@@ -347,13 +237,9 @@ class Transformer(nn.Module):
 
         return self.decoder(encoder_output, encoder_output, src_mask, None)
 
-    def project(self, x: torch.Tensor) -> torch.Tensor:
-        return self.projection(x)
-
     def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         encoded = self.encode(src, src_mask)
-        decoded = self.decode(encoded, src_mask)
-        return self.project(decoded)
+        return encoded
 
 
 class AttentionVisualizer:
@@ -424,6 +310,39 @@ class AttentionVisualizer:
             print(f"Saved attention plot to {save_path}")
         plt.show()
 
+class FileTransformer(nn.Module):
+    def __init__(self, d_model=1024, nhead=8, num_encoder_layers=6, max_seq_len=4096, embedding_tensor=1024, vocab_size=267):
+        super().__init__()
+
+        self.file_projection = nn.Linear(embedding_tensor, d_model)
+
+        self.token_emb = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+
+        self.pos_enc = nn.Parameter(torch.randn(max_seq_len, d_model))
+
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer=nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=d_model*4,
+            ),
+            num_layers=num_encoder_layers,
+            norm=nn.LayerNorm(d_model),
+        )
+
+        self.out_proj = nn.Linear(d_model, 256)
+
+    def forward(self, emb, x):
+        file_vec = self.file_projection(emb.flatten(1))
+
+        seq_emb = self.token_emb(x)
+        seq_emb += self.pos_enc[:x.size(0), None, :]
+
+        seq_emb += file_vec.unsqueeze(0)
+
+        out = self.transformer(seq_emb)
+
+        return self.out_proj(out)
 
 def build_transformer(
         vocab_size: int,
@@ -455,43 +374,19 @@ def build_transformer(
         encoder_block = EncoderBlock(d_model, self_attn, ff_block, dropout)
         encoder_blocks.append(encoder_block)
 
-    # Decoder blocks
-    decoder_blocks = []
-    for i in range(n_layers):
-        self_attn = MultiHeadAttention(
-            d_model=d_model,
-            h=n_heads,
-            dropout=dropout,
-            window_size=window_size  # Local window for self-attention
-        )
-        cross_attn = MultiHeadAttention(
-            d_model=d_model,
-            h=n_heads,
-            dropout=dropout,
-            window_size=None  # Global attention for cross-attention
-        )
-        ff_block = FeedForwardBlock(d_model, d_ff, dropout)
-        decoder_block = DecoderBlock(d_model, self_attn, cross_attn, ff_block, dropout)
-        decoder_blocks.append(decoder_block)
-
     # Create encoder and decoder
     if compress:
         encoder = EncoderCompress(d_model, nn.ModuleList(encoder_blocks), compress_factor)
-        decoder = DecoderExpand(d_model, nn.ModuleList(decoder_blocks), compress_factor)
     else:
         encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
-        decoder = Decoder(d_model, nn.ModuleList(decoder_blocks))
 
     # Projection layer
-    projection = ProjectionLayer(d_model, vocab_size)
 
     # Create transformer
     transformer = Transformer(
         encoder=encoder,
-        decoder=decoder,
         src_embed=src_embed,
         src_pos=src_pos,
-        projection=projection,
         compress=compress
     )
 

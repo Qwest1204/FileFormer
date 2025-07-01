@@ -76,24 +76,3 @@ class ByteLevelTokenizer:
     @property
     def vocab_size(self) -> int:
         return len(self.special_tokens) + 256
-
-
-# Пример использования
-if __name__ == "__main__":
-    tokenizer = ByteLevelTokenizer()
-
-    # Тест кодирования
-    text = "ffe45a7e8ccc"
-    encoded = tokenizer.encode(text)
-    print("Закодированный текст:", encoded)
-
-    # Тест декодирования
-    decoded = tokenizer.decode(encoded)
-    print("Декодированный текст:", decoded)
-
-    # Проверка словаря
-    print("\nПримеры токенов:")
-    print("<sos> =", tokenizer.token2id["<sos>"])
-    print("00 =", tokenizer.token2id["00"])
-    print("ff =", tokenizer.token2id["ff"])
-    print("Размер словаря:", tokenizer.vocab_size)
