@@ -1,7 +1,8 @@
-from notus import build_transformer, UpscaleNet, Tokenizer, FileDataset
+from notus import build_transformer, FileDataset, ByteLevelTokenizer, FileTransformer
 import torch
 import torch.optim as optim
 import torch.nn as nn
+from torch.functional import F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import os
@@ -15,57 +16,49 @@ print("# ========================")
 print("# Конфигурация")
 EPOCHS = 20
 BATCH_SIZE = 1
-SEQ_LEN = 2048
+SEQ_LEN = 4096
 LEARNING_RATE = 0.001
 WEIGHT_DECAY = 1e-5
 SAVE_DIR = "./saved_models"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-PAD_TOKEN_ID = 20  # Убедитесь, что ID соответствует pad token в токенизаторе
+PAD_TOKEN_ID = 3  # Убедитесь, что ID соответствует pad token в токенизаторе
 
 # Создать директорию для сохранения моделей
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 print("# Инициализация данных")
-tokenizer = Tokenizer()
-tokenizer.load_vocab_and_merges('vocab.json', 'merges.txt')
+tokenizer = ByteLevelTokenizer()
 dataset = FileDataset("/home/qwest/app/", SEQ_LEN, tokenizer)
 torch.save(dataset, "dataset1.pt")
-#dataset = torch.load("dataset.pt", weights_only=False)
+dataset = torch.load("dataset1.pt", weights_only=False)
 dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
 print("# Инициализация моделей")
 model_config_base = {
-    "vocab_size": 5777,
+    "vocab_size": 267,
     "max_seq_len": SEQ_LEN,
     "dropout": 0.1
 }
 
-transformer_correction = build_transformer(
-    **model_config_base,
-    d_model=1024,
-    d_ff=1024,
-    n_layers=4,
-    n_heads=4,
-    factor=1,
-    compress=False,
-).to(DEVICE)
+transformer_correction = FileTransformer().to(DEVICE)
 
 correction_data = build_transformer(
-    **model_config_base,
+    vocab_size = 267,
+    max_seq_len =  4096,
+    dropout = 0.1,
     d_model=32,
-    d_ff=32,
-    n_layers=4,
-    n_heads=4,
-    factor=128,
+    d_ff=2048,
+    n_layers=8,
+    n_heads=16,
+    compress_factor=128,
     compress=True,
+    window_size=32,
+    return_attention=False
 ).to(DEVICE)
-
-up_net = UpscaleNet().to(DEVICE)
 
 print("Оптимизация и планировщик")
 all_params = list(transformer_correction.parameters()) + \
-             list(correction_data.parameters()) + \
-             list(up_net.parameters())
+             list(correction_data.parameters())
 
 optimizer = optim.AdamW(all_params, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -110,7 +103,6 @@ for epoch in range(start_epoch, EPOCHS):
 
     transformer_correction.train()
     correction_data.train()
-    up_net.train()
 
     for batch in progress_bar:
         try:
@@ -122,52 +114,23 @@ for epoch in range(start_epoch, EPOCHS):
             # =====================================
             # ДОБАВЛЕННЫЕ ПРОВЕРКИ ДАННЫХ
             # =====================================
-            validate_tensor(origin_ids, "origin_ids", vocab_size=5777)
-            validate_tensor(masked_ids, "masked_ids", vocab_size=5777)
+            validate_tensor(origin_ids, "origin_ids", vocab_size=267)
+            validate_tensor(masked_ids, "masked_ids", vocab_size=267)
             validate_tensor(attention_mask, "attention_mask")
 
             # Forward pass
-            encoded_correction = transformer_correction.encode(masked_ids, attention_mask)
-            validate_tensor(encoded_correction, "encoded_correction")
+            bias = correction_data.forward(origin_ids.unsqueeze(0), attention_mask)
+            validate_tensor(bias, "encoded_correction")
 
-            # ИСПРАВЛЕНИЕ: использование правильной маски
-            bias = correction_data.encode(origin_ids, attention_mask)  # Было attention_mask_masked_ids
-            validate_tensor(bias, "bias")
+            data = transformer_correction.forward(bias, masked_ids.unsqueeze(1))
+            validate_tensor(data, "encoded_correction")
 
-            up_bias = up_net(bias)
-            validate_tensor(up_bias, "up_bias")
-
-            corrected = encoded_correction + up_bias
-            validate_tensor(corrected, "corrected")
-
-            decoded = transformer_correction.decode(corrected, attention_mask)
-            validate_tensor(decoded, "decoded")
-
-            logits = transformer_correction.project(decoded)
-            validate_tensor(logits, "logits")
-
-            # =====================================
-            # ПРОВЕРКА ЛОССА ПЕРЕД ВЫЧИСЛЕНИЕМ
-            # =====================================
-            # Проверка совместимости размерностей
-            if logits.shape[0] != origin_ids.shape[0] or logits.shape[1] != origin_ids.shape[1]:
-                raise ValueError(
-                    f"Shape mismatch: logits {logits.shape} vs origin_ids {origin_ids.shape}"
-                )
-
-            # Расчет потерь с обработкой ошибок
-            loss = criterion(
-                logits.view(-1, logits.size(-1)),
-                origin_ids.view(-1)
+            loss = F.cross_entropy(
+                data.permute(1, 2, 0),
+                origin_ids.unsqueeze(0),
+                ignore_index=2# Целевые байты (0-255)
             )
 
-            # Проверка лосса
-            if torch.isnan(loss):
-                raise ValueError("NaN loss detected")
-            if torch.isinf(loss):
-                raise ValueError("Inf loss detected")
-
-            # Backward pass
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
 
@@ -218,7 +181,6 @@ for epoch in range(start_epoch, EPOCHS):
         checkpoint = {
             "transformer_correction": transformer_correction.state_dict(),
             "correction_data": correction_data.state_dict(),
-            "up_net": up_net.state_dict(),
             "optimizer": optimizer.state_dict(),
             "epoch": epoch,
             "loss": avg_epoch_loss,
