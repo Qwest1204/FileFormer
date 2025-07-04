@@ -39,51 +39,87 @@ class FileDataset(Dataset):
 
             i = end_index
 
-        if replaced_elements:
-            replaced_tensor = torch.tensor(replaced_elements, dtype=input_tensor.dtype)
-        else:
-            replaced_tensor = torch.tensor([], dtype=input_tensor.dtype)
-
-        return output_tensor, replaced_tensor
+        return output_tensor
 
     def prepare(self, files):
-        data = []
+        full_files = []
         for file in tqdm(files):
-            with open(file, 'rb') as f:
-                data_from_file = f.read().hex()
-                tokens = self.tokenizer.encode(data_from_file)
+            # Основные контейнеры для файла
+            ff_data = []  # Исходные токены (Nx512)
+            ff_attmask = []  # Маски внимания для исходных токенов (Nx512)
+            chunk_data = []  # Словари для каждого чанка
 
-                for i in range(0, len(tokens), self.max_seq_length):
-                    real_data_chunk = torch.tensor(tokens[i:i + self.max_seq_length])
-                    mask_data_chunk, removed_elements = self.transform_tensor(real_data_chunk, self.mask_token)
+            try:
+                # Чтение файла блоками для обработки больших файлов
+                chunk_size = 4096  # 4KB блоки
+                all_tokens = []
+                with open(file, 'rb') as f:
+                    while True:
+                        byte_chunk = f.read(chunk_size)
+                        if not byte_chunk:
+                            break
+                        hex_chunk = byte_chunk.hex()
+                        tokens = self.tokenizer.encode(hex_chunk)
+                        all_tokens.extend(tokens)
 
-                    mask_data_chunk_len = len(mask_data_chunk)
-                    removed_elements_len = len(removed_elements)
-                    real_data_chunk_len = len(real_data_chunk)
+                # Обработка чанков
+                for i in range(0, len(all_tokens), self.max_seq_length):
+                    # Исходный чанк
+                    real_chunk = all_tokens[i:i + self.max_seq_length]
+                    real_tensor = torch.tensor(real_chunk, dtype=torch.long)
+                    real_len = len(real_tensor)
 
-                    pad_size1 = self.max_seq_length - mask_data_chunk_len
-                    pad_size2 = self.max_seq_length - removed_elements_len
-                    pad_size3 = self.max_seq_length - real_data_chunk_len
+                    # Маскированный чанк
+                    masked_tensor = self.transform_tensor(real_tensor.clone(), self.mask_token)
+                    if len(masked_tensor) > self.max_seq_length:
+                        masked_tensor = masked_tensor[:self.max_seq_length]
+                    masked_len = len(masked_tensor)
 
-                    # Используем F.pad вместо torch.cat для безопасной работы с пустыми тензорами
-                    if pad_size1 > 0:
-                        mask_data_chunk = F.pad(mask_data_chunk, (0, pad_size1), value=self.pad_token)
-                    if pad_size2 > 0:
-                        removed_elements = F.pad(removed_elements, (0, pad_size2), value=self.pad_token)
-                    if pad_size3 > 0:
-                        real_data_chunk = F.pad(real_data_chunk, (0, pad_size3), value=self.pad_token)
+                    # Паддинг для исходных токенов
+                    real_pad = self.max_seq_length - real_len
+                    padded_real = F.pad(real_tensor, (0, real_pad), value=self.pad_token)
 
-                    attention_mask_removed_elements = [1] * removed_elements_len + [0] * pad_size2
-                    attention_mask_mask_data_chunk = [1] * mask_data_chunk_len + [0] * pad_size1
+                    # Паддинг для маскированных токенов
+                    masked_pad = self.max_seq_length - masked_len
+                    padded_masked = F.pad(masked_tensor, (0, masked_pad), value=self.pad_token)
 
-                    data.append({
-                        'origin_ids': real_data_chunk,
-                        'masked_ids': mask_data_chunk,
-                        'attention_mask_masked_ids': torch.tensor(attention_mask_mask_data_chunk),
-                        'removed_elements': removed_elements,
-                        'attention_mask_removed_elements': torch.tensor(attention_mask_removed_elements),
+                    # Маски внимания
+                    real_attmask = torch.cat([
+                        torch.ones(real_len, dtype=torch.float32),
+                        torch.zeros(real_pad, dtype=torch.float32)
+                    ])
+
+                    masked_attmask = torch.cat([
+                        torch.ones(masked_len, dtype=torch.float32),
+                        torch.zeros(masked_pad, dtype=torch.float32)
+                    ])
+
+                    # Сохранение данных
+                    ff_data.append(padded_real)
+                    ff_attmask.append(real_attmask)
+
+                    chunk_data.append({
+                        'chunk_masked': padded_masked,
+                        'attention': masked_attmask,
+                        'right_chunk': padded_real
                     })
-        return data
+
+            except Exception as e:
+                print(f"Ошибка обработки {file}: {e}")
+                continue
+
+            # Сборка результата для файла
+            if ff_data:
+                file_dict = {
+                    'fulfiletoken': torch.stack(ff_data),
+                    'fullfileattmask': torch.stack(ff_attmask),
+                    'data': chunk_data
+                }
+                full_files.append(file_dict)
+            else:
+                print(f"Файл {file} не содержит данных")
+
+        return full_files
 
     def __len__(self):
         return len(self.data)
