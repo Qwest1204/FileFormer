@@ -164,22 +164,14 @@ class Encoder(nn.Module):
 
 
 class EncoderCompress(nn.Module):
-    def __init__(self, features: int, layers: nn.ModuleList, compress_factor: int = 2) -> None:
+    def __init__(self, features: int, dmodel: int, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
-        self.norm = nn.LayerNorm(features)
-        self.compress_factor = compress_factor
+        self.norm = nn.LayerNorm(dmodel)
         self.compress = nn.Sequential(
-            nn.Conv1d(
-                in_channels=features,
-                out_channels=features,
-                kernel_size=compress_factor,
-                stride=compress_factor,
-                padding=0
-            ),
+            nn.Linear(features, dmodel),
             nn.GELU()
         )
-        self.res_compress = nn.Linear(features * compress_factor, features)
 
     def forward(self, x, mask):
         for layer in self.layers:
@@ -187,19 +179,16 @@ class EncoderCompress(nn.Module):
         x = self.norm(x)
 
         batch, seq_len, d_model = x.shape
-        assert seq_len % self.compress_factor == 0, (
-            f"Sequence length {seq_len} must be divisible by compress factor {self.compress_factor}"
-        )
 
         # Compression
         x_compressed = x.permute(0, 2, 1)
         x_compressed = self.compress(x_compressed).permute(0, 2, 1)
 
         # Residual connection
-        residual = x.reshape(batch, seq_len // self.compress_factor, d_model * self.compress_factor)
-        residual = self.res_compress(residual)
+        #residual = x.reshape(batch, seq_len // self.compress_factor, d_model * self.compress_factor)
+        #residual = self.res_compress(residual)
 
-        return x_compressed + residual
+        return x_compressed# + residual
 
 
 class Transformer(nn.Module):
@@ -376,7 +365,7 @@ def build_transformer(
 
     # Create encoder and decoder
     if compress:
-        encoder = EncoderCompress(d_model, nn.ModuleList(encoder_blocks), compress_factor)
+        encoder = EncoderCompress(max_seq_len, d_model, nn.ModuleList(encoder_blocks))
     else:
         encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
 
