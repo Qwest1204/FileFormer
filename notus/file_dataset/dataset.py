@@ -1,9 +1,11 @@
 import torch
 from tqdm import tqdm
 from pathlib import Path
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 import random
-import torch.nn.functional as F  # Добавляем импорт для F.pad
+import torch.nn.functional as F
+import numpy as np
+
 
 class FileDataset(Dataset):
     def __init__(self, path, max_seq_length, tokenizer):
@@ -14,18 +16,11 @@ class FileDataset(Dataset):
         self.mask_token = self.tokenizer.encode("<mask>")[0]
         self.data = self.prepare(self.files)
 
-    @staticmethod
-    def transform_tensor(input_tensor, value):
-        if value is None:
-            replace_value = torch.tensor(0, dtype=input_tensor.dtype)
-        elif not isinstance(value, torch.Tensor):
-            replace_value = torch.tensor(value, dtype=input_tensor.dtype)
-        else:
-            replace_value = value
-
-        output_tensor = input_tensor.clone()
+    def transform_tensor(self, input_tensor):
+        """Улучшенная функция маскирования с возвратом лейблов"""
         seq_len = input_tensor.size(0)
-        replaced_elements = []
+        output_tensor = input_tensor.clone()
+        labels = torch.full_like(input_tensor, fill_value=-100)  # -100 для игнорирования в loss
 
         i = 0
         while i < seq_len:
@@ -34,28 +29,28 @@ class FileDataset(Dataset):
             end_index = min(start_index + k, seq_len)
 
             for j in range(start_index, end_index):
-                replaced_elements.append(input_tensor[j].item())
-                output_tensor[j] = replace_value
+                # Сохраняем оригинальный токен для лейбла
+                labels[j] = input_tensor[j].item()
+                # Заменяем на маскированный токен
+                output_tensor[j] = self.mask_token
 
             i = end_index
 
-        return output_tensor
+        return output_tensor, labels
 
     def prepare(self, files):
         full_files = []
         for file in tqdm(files):
-            # Основные контейнеры для файла
-            ff_data = []  # Исходные токены (Nx512)
-            ff_attmask = []  # Маски внимания для исходных токенов (Nx512)
-            chunk_data = []  # Словари для каждого чанка
+            ff_data = []
+            ff_attmask = []
+            chunk_data = []
 
             try:
-                # Чтение файла блоками для обработки больших файлов
-                chunk_size = 4096  # 4KB блоки
+                # Чтение и токенизация файла
                 all_tokens = []
                 with open(file, 'rb') as f:
                     while True:
-                        byte_chunk = f.read(chunk_size)
+                        byte_chunk = f.read(4096)
                         if not byte_chunk:
                             break
                         hex_chunk = byte_chunk.hex()
@@ -64,24 +59,18 @@ class FileDataset(Dataset):
 
                 # Обработка чанков
                 for i in range(0, len(all_tokens), self.max_seq_length):
-                    # Исходный чанк
                     real_chunk = all_tokens[i:i + self.max_seq_length]
                     real_tensor = torch.tensor(real_chunk, dtype=torch.long)
                     real_len = len(real_tensor)
 
-                    # Маскированный чанк
-                    masked_tensor = self.transform_tensor(real_tensor.clone(), self.mask_token)
-                    if len(masked_tensor) > self.max_seq_length:
-                        masked_tensor = masked_tensor[:self.max_seq_length]
-                    masked_len = len(masked_tensor)
+                    # Маскирование с получением лейблов
+                    masked_tensor, labels = self.transform_tensor(real_tensor.clone())
 
-                    # Паддинг для исходных токенов
+                    # Паддинг
                     real_pad = self.max_seq_length - real_len
                     padded_real = F.pad(real_tensor, (0, real_pad), value=self.pad_token)
-
-                    # Паддинг для маскированных токенов
-                    masked_pad = self.max_seq_length - masked_len
-                    padded_masked = F.pad(masked_tensor, (0, masked_pad), value=self.pad_token)
+                    padded_masked = F.pad(masked_tensor, (0, real_pad), value=self.pad_token)
+                    padded_labels = F.pad(labels, (0, real_pad), value=-100)  # Паддинг игнорируется
 
                     # Маски внимания
                     real_attmask = torch.cat([
@@ -89,33 +78,25 @@ class FileDataset(Dataset):
                         torch.zeros(real_pad, dtype=torch.float32)
                     ])
 
-                    masked_attmask = torch.cat([
-                        torch.ones(masked_len, dtype=torch.float32),
-                        torch.zeros(masked_pad, dtype=torch.float32)
-                    ])
-
-                    # Сохранение данных
                     ff_data.append(padded_real)
                     ff_attmask.append(real_attmask)
 
                     chunk_data.append({
-                        'chunk_masked': padded_masked,
-                        'attention': masked_attmask,
-                        'right_chunk': padded_real
+                        'input_ids': padded_masked,
+                        'attention_mask': real_attmask.clone(),
+                        'labels': padded_labels
                     })
 
             except Exception as e:
                 print(f"Ошибка обработки {file}: {e}")
                 continue
 
-            # Сборка результата для файла
             if ff_data:
-                file_dict = {
-                    'fulfiletoken': torch.stack(ff_data),
-                    'fullfileattmask': torch.stack(ff_attmask),
-                    'data': chunk_data
-                }
-                full_files.append(file_dict)
+                full_files.append({
+                    'full_file_tokens': torch.stack(ff_data),
+                    'full_file_attmask': torch.stack(ff_attmask),
+                    'chunks': chunk_data
+                })
             else:
                 print(f"Файл {file} не содержит данных")
 
@@ -126,3 +107,32 @@ class FileDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.data[idx]
+
+    @staticmethod
+    def collate_fn(batch):
+        """Функция для объединения данных в батчи"""
+        full_file_tokens = [item['full_file_tokens'] for item in batch]
+        full_file_attmask = [item['full_file_attmask'] for item in batch]
+
+        # Для чанков создаем "мега-батч" из всех чанков
+        chunks_data = {
+            'input_ids': [],
+            'attention_mask': [],
+            'labels': []
+        }
+
+        for item in batch:
+            for chunk in item['chunks']:
+                chunks_data['input_ids'].append(chunk['input_ids'])
+                chunks_data['attention_mask'].append(chunk['attention_mask'])
+                chunks_data['labels'].append(chunk['labels'])
+
+        return {
+            'full_file_tokens': full_file_tokens,
+            'full_file_attmask': full_file_attmask,
+            'chunks': {
+                'input_ids': torch.stack(chunks_data['input_ids']),
+                'attention_mask': torch.stack(chunks_data['attention_mask']),
+                'labels': torch.stack(chunks_data['labels'])
+            }
+        }

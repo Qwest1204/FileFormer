@@ -190,24 +190,47 @@ class EncoderCompress(nn.Module):
 
         return x_compressed# + residual
 
+from torch import Tensor
+
 
 class Transformer(nn.Module):
     def __init__(self, encoder: nn.Module,
-                 src_embed: InputEmbeddings, src_pos: PositionalEncoding, compress: bool) -> None:
+                 src_embed: nn.Module,
+                 src_pos: nn.Module,
+                 compress: bool,
+                 output_dim: int = 2048) -> None:  # Добавляем параметр output_dim
         super().__init__()
         self.encoder = encoder
         self.src_embed = src_embed
         self.src_pos = src_pos
         self.compress = compress
 
-    def encode(self, src: torch.Tensor, src_mask: Optional[torch.Tensor]) -> torch.Tensor:
+        # Добавляем слои для нормализации и проекции
+        self.adaptive_pool = nn.AdaptiveAvgPool1d(output_dim)  # Для фиксированного размера
+        self.layer_norm = nn.LayerNorm(output_dim)  # Нормализация значений
+        self.output_proj = nn.Linear(output_dim, output_dim)  # Дополнительная проекция
+
+    def encode(self, src: Tensor, src_mask: Optional[Tensor] = None) -> Tensor:
         src = self.src_embed(src)
         src = self.src_pos(src)
-        return self.encoder(src, src_mask)
+        encoded = self.encoder(src, src_mask)
 
-    def decode(self, encoder_output: torch.Tensor,
-               src_mask: Optional[torch.Tensor]) -> torch.Tensor:
-        # Handle mask compression if needed
+        # Транспонируем для работы с AdaptiveAvgPool1d
+        # Исходная форма: [batch_size, seq_len, features]
+        encoded = encoded.permute(0, 2, 1)  # Меняем местами seq_len и features
+
+        # Приводим к фиксированному размеру
+        pooled = self.adaptive_pool(encoded)  # [batch_size, features, output_dim]
+
+        # Возвращаем к исходной размерности
+        pooled = pooled.permute(0, 2, 1)  # [batch_size, output_dim, features]
+
+        # Нормализация и проекция
+        normalized = self.layer_norm(pooled)
+        return self.output_proj(normalized)
+
+    def decode(self, encoder_output: Tensor,
+               src_mask: Optional[Tensor] = None) -> Tensor:
         if self.compress and src_mask is not None:
             compress_factor = self.encoder.compress_factor
             if src_mask.dim() == 2:
@@ -226,7 +249,8 @@ class Transformer(nn.Module):
 
         return self.decoder(encoder_output, encoder_output, src_mask, None)
 
-    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, src: Tensor,
+                src_mask: Optional[Tensor] = None) -> Tensor:
         encoded = self.encode(src, src_mask)
         return encoded
 
@@ -341,10 +365,10 @@ def build_transformer(
         n_layers: int = 6,
         n_heads: int = 8,
         d_ff: int = 2048,
-        compress_factor: int = 2,
         compress: bool = True,
         window_size: int = 64,
-        return_attention: bool = False
+        return_attention: bool = False,
+        output_dim: int = 2048,
 ) -> Transformer:
     # Embeddings and positional encoding
     src_embed = InputEmbeddings(d_model, vocab_size)
@@ -376,7 +400,8 @@ def build_transformer(
         encoder=encoder,
         src_embed=src_embed,
         src_pos=src_pos,
-        compress=compress
+        compress=compress,
+        output_dim=output_dim,
     )
 
     # Initialize parameters
