@@ -2,52 +2,77 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import matplotlib.pyplot as plt
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
+
 
 class InputEmbeddings(nn.Module):
+    """Converts input token IDs to embeddings and scales them by sqrt(d_model).
+
+    Args:
+        d_model: Dimension of embeddings
+        vocab_size: Size of vocabulary
+    """
+
     def __init__(self, d_model: int, vocab_size: int) -> None:
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.d_model = d_model
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.embedding(x) * math.sqrt(self.d_model)
 
 
 class PositionalEncoding(nn.Module):
+    """Adds positional encoding to input embeddings with dropout.
+
+    Args:
+        d_model: Dimension of embeddings
+        max_len: Maximum sequence length
+        dropout: Dropout probability
+    """
+
     def __init__(self, d_model: int, max_len: int, dropout: float) -> None:
         super().__init__()
         self.dropout = nn.Dropout(dropout)
         self.d_model = d_model
+        self.max_len = max_len
 
+        # Initialize positional encoding buffer
+        self.register_buffer('pe', self._create_positional_encoding(max_len, d_model))
+
+    @staticmethod
+    def _create_positional_encoding(max_len: int, d_model: int) -> torch.Tensor:
+        """Generate positional encoding tensor."""
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        self.register_buffer('pe', pe)
+        return pe.unsqueeze(0)  # Shape: [1, max_len, d_model]
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         seq_len = x.size(1)
+
+        # Dynamically extend positional encoding if needed
         if seq_len > self.pe.size(1):
-            # Динамическое расширение позиционного кодирования
             extra_len = seq_len - self.pe.size(1)
-            extra_pe = torch.zeros(1, extra_len, self.d_model, device=x.device)
-            position = torch.arange(self.pe.size(1), self.pe.size(1) + extra_len, dtype=torch.float,
-                                    device=x.device).unsqueeze(1)
-            div_term = torch.exp(torch.arange(0, self.d_model, 2).float() * (-math.log(10000.0) / self.d_model)).to(
-                x.device)
-            extra_pe[0, :, 0::2] = torch.sin(position * div_term)
-            extra_pe[0, :, 1::2] = torch.cos(position * div_term)
+            extra_pe = self._create_positional_encoding(extra_len, self.d_model)
             self.pe = torch.cat([self.pe, extra_pe], dim=1)
 
+        # Add positional encoding to input
         x = x + self.pe[:, :seq_len].detach()
         return self.dropout(x)
 
 
 class FeedForwardBlock(nn.Module):
+    """Position-wise feed-forward network with GELU activation and dropout.
+
+    Args:
+        d_model: Input/output dimension
+        d_ff: Hidden layer dimension
+        dropout: Dropout probability
+    """
+
     def __init__(self, d_model: int, d_ff: int, dropout: float) -> None:
         super().__init__()
         self.linear1 = nn.Linear(d_model, d_ff)
@@ -55,7 +80,7 @@ class FeedForwardBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.activation = nn.GELU()
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.linear1(x)
         x = self.activation(x)
         x = self.dropout(x)
@@ -63,7 +88,17 @@ class FeedForwardBlock(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_model: int, h: int, dropout: float, window_size: Optional[int] = None):
+    """Multi-head attention mechanism with optional local window attention.
+
+    Args:
+        d_model: Model dimension
+        h: Number of attention heads
+        dropout: Dropout probability
+        window_size: Size of local attention window (None for global attention)
+    """
+
+    def __init__(self, d_model: int, h: int, dropout: float,
+                 window_size: Optional[int] = None) -> None:
         super().__init__()
         self.d_model = d_model
         self.h = h
@@ -77,10 +112,12 @@ class MultiHeadAttention(nn.Module):
         self.w_v = nn.Linear(d_model, d_model)
         self.w_o = nn.Linear(d_model, d_model)
         self.dropout = nn.Dropout(dropout)
-        self.attn_weights = None
+        self.attn_weights = None  # For attention visualization
 
     @staticmethod
-    def create_local_mask(seq_len: int, window_size: int, device: torch.device) -> torch.Tensor:
+    def create_local_mask(seq_len: int, window_size: int,
+                          device: torch.device) -> torch.Tensor:
+        """Create local attention mask with given window size."""
         left_radius = (window_size - 1) // 2
         right_radius = window_size - 1 - left_radius
 
@@ -90,28 +127,28 @@ class MultiHeadAttention(nn.Module):
         mask = (col_idx >= row_idx - left_radius) & (col_idx <= row_idx + right_radius)
         return mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
 
-    def forward(self, q, k, v, mask: Optional[torch.Tensor] = None):
+    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+                mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         batch_size, seq_len_q, _ = q.size()
         seq_len_k = k.size(1)
 
-        # Linear projections
+        # Project and split into heads
         query = self.w_q(q).view(batch_size, seq_len_q, self.h, self.d_k).transpose(1, 2)
         key = self.w_k(k).view(batch_size, seq_len_k, self.h, self.d_k).transpose(1, 2)
         value = self.w_v(v).view(batch_size, seq_len_k, self.h, self.d_k).transpose(1, 2)
 
-        # Attention scores
+        # Calculate attention scores
         attn_scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(self.d_k)
 
-        # Apply local mask if applicable
+        # Apply local window mask if specified
         if self.window_size is not None and seq_len_q == seq_len_k:
             local_mask = self.create_local_mask(seq_len_q, self.window_size, attn_scores.device)
             attn_scores = attn_scores.masked_fill(~local_mask, -1e9)
 
-        # Apply external mask
+        # Apply external mask (padding mask)
         if mask is not None:
-            if mask.dim() == 2:
-                mask = mask.unsqueeze(1).unsqueeze(1)
-            elif mask.dim() == 3:
+            # Ensure mask has correct dimensions [batch, 1, 1, seq_len]
+            while mask.dim() < 4:
                 mask = mask.unsqueeze(1)
             attn_scores = attn_scores.masked_fill(mask == 0, -1e9)
 
@@ -127,16 +164,33 @@ class MultiHeadAttention(nn.Module):
 
 
 class ResidualConnection(nn.Module):
+    """Residual connection with layer normalization and dropout.
+
+    Args:
+        features: Feature dimension for layer norm
+        dropout: Dropout probability
+    """
+
     def __init__(self, features: int, dropout: float) -> None:
         super().__init__()
         self.norm = nn.LayerNorm(features)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, sublayer):
+    def forward(self, x: torch.Tensor, sublayer: nn.Module) -> torch.Tensor:
+        """Apply residual connection: output = x + dropout(sublayer(norm(x)))"""
         return x + self.dropout(sublayer(self.norm(x)))
 
 
 class EncoderBlock(nn.Module):
+    """Transformer encoder block with self-attention and feed-forward layers.
+
+    Args:
+        features: Feature dimension (d_model)
+        self_attention: Self-attention module
+        feed_forward: Feed-forward module
+        dropout: Dropout probability
+    """
+
     def __init__(self, features: int, self_attention: MultiHeadAttention,
                  feed_forward: FeedForwardBlock, dropout: float) -> None:
         super().__init__()
@@ -145,25 +199,40 @@ class EncoderBlock(nn.Module):
         self.residual1 = ResidualConnection(features, dropout)
         self.residual2 = ResidualConnection(features, dropout)
 
-    def forward(self, x, src_mask):
+    def forward(self, x: torch.Tensor, src_mask: torch.Tensor) -> torch.Tensor:
         x = self.residual1(x, lambda x: self.self_attention(x, x, x, src_mask))
         x = self.residual2(x, self.feed_forward)
         return x
 
 
 class Encoder(nn.Module):
+    """Transformer encoder composed of multiple encoder blocks.
+
+    Args:
+        features: Feature dimension (d_model)
+        layers: List of encoder blocks
+    """
+
     def __init__(self, features: int, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
         self.norm = nn.LayerNorm(features)
 
-    def forward(self, x, mask):
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
             x = layer(x, mask)
         return self.norm(x)
 
 
 class EncoderCompress(nn.Module):
+    """Encoder with sequence compression at the output.
+
+    Args:
+        features: Input feature dimension
+        dmodel: Output feature dimension
+        layers: List of encoder blocks
+    """
+
     def __init__(self, features: int, dmodel: int, layers: nn.ModuleList) -> None:
         super().__init__()
         self.layers = layers
@@ -173,189 +242,50 @@ class EncoderCompress(nn.Module):
             nn.GELU()
         )
 
-    def forward(self, x, mask):
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # Process through encoder layers
         for layer in self.layers:
             x = layer(x, mask)
         x = self.norm(x)
 
-        batch, seq_len, d_model = x.shape
-
-        # Compression
+        # Compress sequence dimension
         x_compressed = x.permute(0, 2, 1)
         x_compressed = self.compress(x_compressed).permute(0, 2, 1)
-
-        # Residual connection
-        #residual = x.reshape(batch, seq_len // self.compress_factor, d_model * self.compress_factor)
-        #residual = self.res_compress(residual)
-
-        return x_compressed# + residual
-
-from torch import Tensor
+        return x_compressed
 
 
 class Transformer(nn.Module):
+    """Transformer model with encoder-only architecture.
+
+    Args:
+        encoder: Encoder module
+        src_embed: Source embedding module
+        src_pos: Positional encoding module
+        compress: Whether to use sequence compression
+    """
+
     def __init__(self, encoder: nn.Module,
                  src_embed: nn.Module,
                  src_pos: nn.Module,
-                 compress: bool,
-                 output_dim: int = 2048) -> None:  # Добавляем параметр output_dim
+                 compress: bool) -> None:
         super().__init__()
         self.encoder = encoder
         self.src_embed = src_embed
         self.src_pos = src_pos
         self.compress = compress
 
-        # Добавляем слои для нормализации и проекции
-        self.adaptive_pool = nn.AdaptiveAvgPool1d(output_dim)  # Для фиксированного размера
-        self.layer_norm = nn.LayerNorm(output_dim)  # Нормализация значений
-        self.output_proj = nn.Linear(output_dim, output_dim)  # Дополнительная проекция
-
-    def encode(self, src: Tensor, src_mask: Optional[Tensor] = None) -> Tensor:
+    def encode(self, src: torch.Tensor,
+               src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Encode input sequence."""
         src = self.src_embed(src)
         src = self.src_pos(src)
-        encoded = self.encoder(src, src_mask)
+        return self.encoder(src, src_mask)
 
-        # Транспонируем для работы с AdaptiveAvgPool1d
-        # Исходная форма: [batch_size, seq_len, features]
-        encoded = encoded.permute(0, 2, 1)  # Меняем местами seq_len и features
+    def forward(self, src: torch.Tensor,
+                src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Forward pass through transformer."""
+        return self.encode(src, src_mask)
 
-        # Приводим к фиксированному размеру
-        pooled = self.adaptive_pool(encoded)  # [batch_size, features, output_dim]
-
-        # Возвращаем к исходной размерности
-        pooled = pooled.permute(0, 2, 1)  # [batch_size, output_dim, features]
-
-        # Нормализация и проекция
-        normalized = self.layer_norm(pooled)
-        return self.output_proj(normalized)
-
-    def decode(self, encoder_output: Tensor,
-               src_mask: Optional[Tensor] = None) -> Tensor:
-        if self.compress and src_mask is not None:
-            compress_factor = self.encoder.compress_factor
-            if src_mask.dim() == 2:
-                src_mask = src_mask.unsqueeze(1)
-                src_mask = F.max_pool1d(
-                    src_mask.float(),
-                    kernel_size=compress_factor,
-                    stride=compress_factor
-                ).squeeze(1).bool()
-            elif src_mask.dim() == 3:
-                src_mask = F.max_pool1d(
-                    src_mask.float(),
-                    kernel_size=compress_factor,
-                    stride=compress_factor
-                ).bool()
-
-        return self.decoder(encoder_output, encoder_output, src_mask, None)
-
-    def forward(self, src: Tensor,
-                src_mask: Optional[Tensor] = None) -> Tensor:
-        encoded = self.encode(src, src_mask)
-        return encoded
-
-
-class AttentionVisualizer:
-    def __init__(self):
-        self.attention_weights = {}
-        self.hooks = []
-        self.layer_names = []
-        self.module_to_name = {}
-
-    def _hook_fn(self, module, inputs, outputs):
-        try:
-            if hasattr(module, 'attn_weights') and module.attn_weights is not None:
-                attn = module.attn_weights
-            else:
-                return
-
-            # Get module name
-            if module not in self.module_to_name:
-                layer_type = module.__class__.__name__
-                layer_id = f"{layer_type}_{len(self.layer_names)}"
-                self.module_to_name[module] = layer_id
-                self.layer_names.append(layer_id)
-            else:
-                layer_id = self.module_to_name[module]
-
-            # Store attention weights (detach and move to CPU)
-            self.attention_weights[layer_id] = attn.detach().cpu()
-
-        except Exception as e:
-            print(f"Attention hook error: {e}")
-
-    def register_hooks(self, model: nn.Module):
-        self.module_to_name = {}
-        for name, module in model.named_modules():
-            if isinstance(module, MultiHeadAttention):
-                self.module_to_name[module] = name
-                hook = module.register_forward_hook(self._hook_fn)
-                self.hooks.append(hook)
-                print(f"Registered hook for: {name}")
-
-    def remove_hooks(self):
-        for hook in self.hooks:
-            hook.remove()
-        self.hooks = []
-
-    def get_attention(self, layer_id: str) -> Optional[torch.Tensor]:
-        return self.attention_weights.get(layer_id)
-
-    def visualize(self, layer_id: str, head: int = 0, save_path: str = None):
-        if layer_id not in self.attention_weights:
-            print(f"Layer {layer_id} not found. Available layers: {list(self.attention_weights.keys())}")
-            return
-
-        attn = self.attention_weights[layer_id]
-        if head >= attn.shape[1]:
-            print(f"Head index {head} out of range (max {attn.shape[1] - 1})")
-            return
-
-        plt.figure(figsize=(12, 10))
-        plt.imshow(attn[0, head].numpy(), cmap='viridis', aspect='auto')
-        plt.colorbar()
-        plt.title(f"Attention: {layer_id} - Head {head}")
-        plt.xlabel("Key Positions")
-        plt.ylabel("Query Positions")
-
-        if save_path:
-            plt.savefig(save_path, bbox_inches='tight')
-            print(f"Saved attention plot to {save_path}")
-        plt.show()
-
-class FileTransformer(nn.Module):
-    def __init__(self, d_model=1024, nhead=8, num_encoder_layers=6, max_seq_len=4096, embedding_tensor=1024, vocab_size=267):
-        super().__init__()
-
-        self.file_projection = nn.Linear(embedding_tensor, d_model)
-
-        self.token_emb = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
-
-        self.pos_enc = nn.Parameter(torch.randn(max_seq_len, d_model))
-
-        self.transformer = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(
-                d_model=d_model,
-                nhead=nhead,
-                dim_feedforward=d_model*4,
-            ),
-            num_layers=num_encoder_layers,
-            norm=nn.LayerNorm(d_model),
-        )
-
-        self.out_proj = nn.Linear(d_model, 256)
-
-    def forward(self, emb, x):
-        file_vec = self.file_projection(emb.flatten(1))
-
-        seq_emb = self.token_emb(x)
-        seq_emb += self.pos_enc[:x.size(0), None, :]
-
-        seq_emb += file_vec.unsqueeze(0)
-
-        out = self.transformer(seq_emb)
-
-        return self.out_proj(out)
 
 def build_transformer(
         vocab_size: int,
@@ -368,15 +298,31 @@ def build_transformer(
         compress: bool = True,
         window_size: int = 64,
         return_attention: bool = False,
-        output_dim: int = 2048,
 ) -> Transformer:
+    """Construct a Transformer model with specified hyperparameters.
+
+    Args:
+        vocab_size: Vocabulary size
+        d_model: Model dimension
+        max_seq_len: Maximum sequence length
+        dropout: Dropout probability
+        n_layers: Number of encoder layers
+        n_heads: Number of attention heads
+        d_ff: Feed-forward hidden dimension
+        compress: Use sequence compression
+        window_size: Local attention window size
+        return_attention: Enable attention visualization
+
+    Returns:
+        Configured Transformer model
+    """
     # Embeddings and positional encoding
     src_embed = InputEmbeddings(d_model, vocab_size)
     src_pos = PositionalEncoding(d_model, max_seq_len, dropout)
 
-    # Encoder blocks
+    # Create encoder blocks
     encoder_blocks = []
-    for i in range(n_layers):
+    for _ in range(n_layers):
         self_attn = MultiHeadAttention(
             d_model=d_model,
             h=n_heads,
@@ -387,13 +333,11 @@ def build_transformer(
         encoder_block = EncoderBlock(d_model, self_attn, ff_block, dropout)
         encoder_blocks.append(encoder_block)
 
-    # Create encoder and decoder
+    # Create encoder
     if compress:
         encoder = EncoderCompress(max_seq_len, d_model, nn.ModuleList(encoder_blocks))
     else:
         encoder = Encoder(d_model, nn.ModuleList(encoder_blocks))
-
-    # Projection layer
 
     # Create transformer
     transformer = Transformer(
@@ -401,17 +345,11 @@ def build_transformer(
         src_embed=src_embed,
         src_pos=src_pos,
         compress=compress,
-        output_dim=output_dim,
     )
 
     # Initialize parameters
     for p in transformer.parameters():
         if p.dim() > 1:
             nn.init.xavier_uniform_(p)
-
-    # Add attention visualization if requested
-    if return_attention:
-        transformer.attention_visualizer = AttentionVisualizer()
-        transformer.attention_visualizer.register_hooks(transformer)
 
     return transformer

@@ -34,18 +34,17 @@ def init_models():
         max_seq_len=512,
         embedding_tensor=1024,
         vocab_size=267,
-
     ).to(DEVICE)
 
     correction_data = build_transformer(
         vocab_size=267,
         max_seq_len=SEQ_LEN,
         d_model=32,
-        d_ff=2048,
+        d_ff=64,
         n_layers=8,
         n_heads=16,
         compress=True,
-        window_size=32
+        window_size=64
     ).to(DEVICE)
 
     # Компиляция для PyTorch 2.0+
@@ -77,16 +76,14 @@ def save_checkpoint(epoch, models, optimizer, loss, is_best=False):
 if __name__ == "__main__":
     print("# Инициализация данных")
     tokenizer = ByteLevelTokenizer()
-    dataset = FileDataset("/home/qwest/app/", SEQ_LEN, tokenizer)
-    # torch.save(dataset, "glob_data.pt")
+    dataset = torch.load("glob_data.pt", weights_only=False)
     dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
         shuffle=True,
         num_workers=NUM_WORKERS,
-        pin_memory=True,
-        persistent_workers=True,
-        collate_fn=dataset.collate_fn  # Упрощенная коллация
+        persistent_workers=True if NUM_WORKERS > 0 else False,
+        collate_fn=dataset.collate_fn
     )
 
     print("# Инициализация моделей")
@@ -96,7 +93,7 @@ if __name__ == "__main__":
     all_params = list(transformer_correction.parameters()) + list(correction_data.parameters())
     optimizer = optim.AdamW(all_params, lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.1, patience=3, verbose=True
+        optimizer, mode='min', factor=0.1, patience=3,
     )
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
@@ -115,73 +112,52 @@ if __name__ == "__main__":
         correction_data.train()
 
         for batch in progress_bar:
-            try:
-                # Обработка чанков
-                chunks = batch['chunks']
-                total_chunks = len(chunks['input_ids'])
+            chunks = batch['chunks']
+            total_chunks = len(chunks['input_ids'])
 
-                # Инициализация накопителей
-                total_loss = 0.0
+            # Обработка всего файла
+            original_files_tokens = batch['full_file_tokens'][0].to(DEVICE, non_blocking=True)
+            original_files_mask = batch['full_file_attmask'][0].to(DEVICE, non_blocking=True)
+            total_loss = 0.0
+            # Вычисление bias для всего файла
+            outputs = torch.zeros((1, 32, 32), dtype=torch.float32).to('cuda')
+            for FFT, FFA in zip(original_files_tokens, original_files_mask):
+                outputs += correction_data(FFT.unsqueeze(0), FFA.unsqueeze(0))
 
-                # Обработка чанков пакетами по 8 для баланса скорости и памяти
-                for i in range(0, total_chunks, 8):
-                    # Выборка блока чанков
-                    chunk_batch = {
-                        'origin_ids': chunks['origin_ids'][i:i + 8].to(DEVICE, non_blocking=True),
-                        'masked_ids': chunks['input_ids'][i:i + 8].to(DEVICE, non_blocking=True),
-                        'attention_mask': chunks['attention_mask'][i:i + 8].to(DEVICE, non_blocking=True)
-                    }
+            logits = transformer_correction(
+                outputs,
+                chunks['masked_ids']
+            )
 
-                    batch_size = chunk_batch['origin_ids'].size(0)
+            loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                chunk_batch['origin_ids'].view(-1),
+                ignore_index=PAD_TOKEN_ID
+            )
+            loss.backward()
 
-                    # Mixed precision forward pass
-                    bias = correction_data(
-                        chunk_batch['origin_ids'],
-                        chunk_batch['attention_mask']
-                    )
-                    logits = transformer_correction(
-                        bias,
-                        chunk_batch['masked_ids']
-                    )
+            # Gradient clipping
+            grad_norm = nn.utils.clip_grad_norm_(all_params, 1.0)
 
-                    loss = F.cross_entropy(
-                        logits.view(-1, logits.size(-1)),
-                        chunk_batch['origin_ids'].view(-1),
-                        ignore_index=PAD_TOKEN_ID
-                    )
-                    loss = loss * batch_size
+            optimizer.step()
 
-                    # Оптимизированный backward pass
-                    optimizer.zero_grad(set_to_none=True)
-                    loss.backward()
+            total_loss += loss.item()
+            epoch_samples += current_batch_size
 
-                    grad_norm = nn.utils.clip_grad_norm_(all_params, 1.0)
+            # Обновление статистики эпохи
+            epoch_loss += total_loss
+            avg_batch_loss = total_loss / total_chunks
+            global_step += 1
 
-                    optimizer.step()
+            progress_bar.set_postfix({
+                "loss": f"{avg_batch_loss:.4f}",
+                "lr": f"{optimizer.param_groups[0]['lr']:.2e}"
+            })
 
-                    total_loss += loss.item()
-
-                # Обновление статистики
-                epoch_loss += total_loss
-                epoch_samples += total_chunks
-                global_step += 1
-
-                avg_loss = total_loss / total_chunks
-                progress_bar.set_postfix({
-                    "loss": f"{avg_loss:.4f}",
-                    "lr": f"{optimizer.param_groups[0]['lr']:.2e}"
-                })
-
-                # Логирование
-                writer.add_scalar('Loss/train', avg_loss, global_step)
-                writer.add_scalar('Grad/norm', grad_norm, global_step)
-                writer.add_scalar('LR', optimizer.param_groups[0]['lr'], global_step)
-
-            except RuntimeError as e:
-                if 'CUDA out of memory' in str(e):
-                    tqdm.write(f"OOM error: {str(e)}")
-                    torch.cuda.empty_cache()
-                continue
+            # Логирование
+            writer.add_scalar('Loss/train', avg_batch_loss, global_step)
+            writer.add_scalar('Grad/norm', grad_norm, global_step)
+            writer.add_scalar('LR', optimizer.param_groups[0]['lr'], global_step)
 
         # Финализация эпохи
         avg_epoch_loss = epoch_loss / epoch_samples
