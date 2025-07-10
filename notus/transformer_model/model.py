@@ -286,6 +286,39 @@ class Transformer(nn.Module):
         """Forward pass through transformer."""
         return self.encode(src, src_mask)
 
+class FileTransformer(nn.Module):
+    def __init__(self, d_model=1024, nhead=8, num_encoder_layers=6, max_seq_len=4096, embedding_tensor=1024, vocab_size=267):
+        super().__init__()
+
+        self.file_projection = nn.Linear(embedding_tensor, d_model)
+
+        self.token_emb = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+
+        self.pos_enc = nn.Parameter(torch.randn(max_seq_len, d_model))
+
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer=nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=d_model*4,
+            ),
+            num_layers=num_encoder_layers,
+            norm=nn.LayerNorm(d_model),
+        )
+
+        self.out_proj = nn.Linear(d_model, 256)
+
+    def forward(self, emb, x):
+        file_vec = self.file_projection(emb.flatten(1))
+
+        seq_emb = self.token_emb(x)
+        seq_emb += self.pos_enc[:x.size(0), None, :]
+
+        seq_emb += file_vec.unsqueeze(0)
+
+        out = self.transformer(seq_emb)
+
+        return self.out_proj(out)
 
 def build_transformer(
         vocab_size: int,
