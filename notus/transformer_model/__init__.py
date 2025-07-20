@@ -1,3 +1,3 @@
-__all__ = ['build_transformer', 'Transformer', 'FileTransformer']
+__all__ = ['FileTransformerBlock', 'ValueTransformerBlock', 'FileTransformer']
 
-from .model import *
+from .model import ValueTransformerBlock, FileTransformerBlock, FileTransformer
