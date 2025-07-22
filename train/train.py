@@ -1,11 +1,11 @@
-from notus.transformer_model import FileTransformerBlock, ValueTransformerBlock, FileTransformer
+from notus import EncoderDecoder, Encoder, Decoder
 from notus import ByteLevelTokenizer, FileDataset
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 
-transformer = FileTransformerBlock(max_seq_len=512, embedding_tensor=512, num_encoder_layers=2, nhead=2)
-transformerv = ValueTransformerBlock(max_seq_len=512, correction_tensor=512, num_encoder_layers=2, nhead=2)
-trainning_model = FileTransformer(transformerv, transformer, 1)
+encoder = Encoder()
+decoder = Decoder()
+trainning_model = EncoderDecoder(encoder=encoder, decoder=decoder)
 
 dataset = FileDataset("path", max_seq_length=512, tokenizer=ByteLevelTokenizer())
 dataloader = DataLoader(
