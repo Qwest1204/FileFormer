@@ -82,10 +82,10 @@ class Decoder(nn.Module):
         x = x.view(-1, self.max_seq_len, self.d_model)  # [batch_size, max_seq_len, d_model]
 
         # Ограничение длины последовательности
-        x = x[:, :self.seq_len, :]  # [batch_size, seq_len, d_model]
+        x = x[:, :self.max_seq_len, :]  # [batch_size, seq_len, d_model]
 
         # Добавление позиционного кодирования
-        x = x + self.pos_enc[:self.seq_len, :]  # [batch_size, seq_len, d_model]
+        x = x + self.pos_enc[:self.max_seq_len, :]  # [batch_size, seq_len, d_model]
 
         # Нормализация
         x = self.norm(x)  # [batch_size, seq_len, d_model]
