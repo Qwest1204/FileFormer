@@ -1,11 +1,9 @@
 import torch
-from tqdm import tqdm
-from pathlib import Path
-from torch.utils.data import Dataset, DataLoader
 import random
+from torch.utils.data import Dataset
 import torch.nn.functional as F
-import numpy as np
-
+from pathlib import Path
+from tqdm import tqdm
 
 class FileDataset(Dataset):
     def __init__(self, path, max_seq_length, tokenizer):
@@ -20,18 +18,16 @@ class FileDataset(Dataset):
         """Улучшенная функция маскирования с возвратом лейблов"""
         seq_len = input_tensor.size(0)
         output_tensor = input_tensor.clone()
-        labels = torch.full_like(input_tensor, fill_value=-100)  # -100 для игнорирования в loss
+        labels = torch.full_like(input_tensor, fill_value=-100)
 
         i = 0
         while i < seq_len:
-            k = random.choice([0, 1, 2, 4, 8, 16])
+            k = random.choice([0, 1, 2, 4])
             start_index = i + 1
             end_index = min(start_index + k, seq_len)
 
             for j in range(start_index, end_index):
-                # Сохраняем оригинальный токен для лейбла
                 labels[j] = input_tensor[j].item()
-                # Заменяем на маскированный токен
                 output_tensor[j] = self.mask_token
 
             i = end_index
@@ -39,100 +35,52 @@ class FileDataset(Dataset):
         return output_tensor, labels
 
     def prepare(self, files):
-        full_files = []
+        all_chunks = []
         for file in tqdm(files):
-            ff_data = []
-            ff_attmask = []
-            chunk_data = []
-
             try:
-                # Чтение и токенизация файла
-                all_tokens = []
-                with open(file, 'rb') as f:
-                    while True:
-                        byte_chunk = f.read(4096)
-                        if not byte_chunk:
-                            break
-                        hex_chunk = byte_chunk.hex()
-                        tokens = self.tokenizer.encode(hex_chunk)
-                        all_tokens.extend(tokens)
-
-                # Обработка чанков
-                for i in range(0, len(all_tokens), self.max_seq_length):
-                    real_chunk = all_tokens[i:i + self.max_seq_length]
-                    real_tensor = torch.tensor(real_chunk, dtype=torch.long)
-                    real_len = len(real_tensor)
-
-                    # Маскирование с получением лейблов
-                    masked_tensor, labels = self.transform_tensor(real_tensor.clone())
-
-                    # Паддинг
-                    real_pad = self.max_seq_length - real_len
-                    padded_real = F.pad(real_tensor, (0, real_pad), value=self.pad_token)
-                    padded_masked = F.pad(masked_tensor, (0, real_pad), value=self.pad_token)
-                    padded_labels = F.pad(labels, (0, real_pad), value=-100)  # Паддинг игнорируется
-
-                    # Маски внимания
-                    real_attmask = torch.cat([
-                        torch.ones(real_len, dtype=torch.float32),
-                        torch.zeros(real_pad, dtype=torch.float32)
-                    ])
-
-                    ff_data.append(padded_real)
-                    ff_attmask.append(real_attmask)
-
-                    chunk_data.append({
-                        'input_ids': padded_masked,
-                        'attention_mask': real_attmask.clone(),
-                        'labels': padded_labels
-                    })
-
+                all_tokens = self.read_and_tokenize(file)
+                chunk_data = self.process_chunks(all_tokens)
+                all_chunks.extend(chunk_data)
             except Exception as e:
                 print(f"Ошибка обработки {file}: {e}")
                 continue
+        return all_chunks
 
-            if ff_data:
-                full_files.append({
-                    'full_file_tokens': torch.stack(ff_data),
-                    'full_file_attmask': torch.stack(ff_attmask),
-                    'chunks': chunk_data
-                })
-            else:
-                print(f"Файл {file} не содержит данных")
+    def read_and_tokenize(self, file):
+        all_tokens = []
+        with open(file, 'rb') as f:
+            while True:
+                byte_chunk = f.read(4096)
+                if not byte_chunk:
+                    break
+                hex_chunk = byte_chunk.hex()
+                tokens = self.tokenizer.encode(hex_chunk)
+                all_tokens.extend(tokens)
+        return all_tokens
 
-        return full_files
+    def process_chunks(self, all_tokens):
+        chunk_data = []
+        for i in range(0, len(all_tokens), self.max_seq_length):
+            real_chunk = all_tokens[i:i + self.max_seq_length]
+            real_tensor = torch.tensor(real_chunk, dtype=torch.long)
+            masked_tensor, labels = self.transform_tensor(real_tensor.clone())
+            padded_masked, padded_labels = self.pad_tensors(masked_tensor, labels)
+            chunk_data.append({
+                'lbl': padded_labels,
+                'iid': padded_masked,
+                'ori': real_tensor
+            })
+        return chunk_data
+
+    def pad_tensors(self, tensor, labels):
+        real_len = len(tensor)
+        real_pad = self.max_seq_length - real_len
+        padded_tensor = F.pad(tensor, (0, real_pad), value=self.pad_token)
+        padded_labels = F.pad(labels, (0, real_pad), value=-100)
+        return padded_tensor, padded_labels
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
         return self.data[idx]
-
-    @staticmethod
-    def collate_fn(batch):
-        """Функция для объединения данных в батчи"""
-        full_file_tokens = [item['full_file_tokens'] for item in batch]
-        full_file_attmask = [item['full_file_attmask'] for item in batch]
-
-        # Для чанков создаем "мега-батч" из всех чанков
-        chunks_data = {
-            'input_ids': [],
-            'attention_mask': [],
-            'labels': []
-        }
-
-        for item in batch:
-            for chunk in item['chunks']:
-                chunks_data['input_ids'].append(chunk['input_ids'])
-                chunks_data['attention_mask'].append(chunk['attention_mask'])
-                chunks_data['labels'].append(chunk['labels'])
-
-        return {
-            'full_file_tokens': full_file_tokens,
-            'full_file_attmask': full_file_attmask,
-            'chunks': {
-                'input_ids': torch.stack(chunks_data['input_ids']),
-                'attention_mask': torch.stack(chunks_data['attention_mask']),
-                'labels': torch.stack(chunks_data['labels'])
-            }
-        }
