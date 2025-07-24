@@ -2,28 +2,86 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import math
+import numpy as np
+
+def get_emb(sin_inp):
+    """
+    Gets a base embedding for one dimension with sin and cos intertwined
+    """
+    emb = torch.stack((sin_inp.sin(), sin_inp.cos()), dim=-1)
+    return torch.flatten(emb, -2, -1)
+
+class PositionalEncoding1D(nn.Module):
+    def __init__(self, channels, dtype_override=None):
+        """
+        :param channels: The last dimension of the tensor you want to apply pos emb to.
+        :param dtype_override: If set, overrides the dtype of the output embedding.
+        """
+        super(PositionalEncoding1D, self).__init__()
+        self.org_channels = channels
+        channels = int(np.ceil(channels / 2) * 2)
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, channels, 2).float() / channels))
+        self.register_buffer("inv_freq", inv_freq)
+        self.register_buffer("cached_penc", None, persistent=False)
+        self.channels = channels
+        self.dtype_override = dtype_override
+
+    def forward(self, tensor):
+        """
+        :param tensor: A 3d tensor of size (batch_size, x, ch)
+        :return: Positional Encoding Matrix of size (batch_size, x, ch)
+        """
+        if len(tensor.shape) != 3:
+            raise RuntimeError("The input tensor has to be 3d!")
+
+        if self.cached_penc is not None and self.cached_penc.shape == tensor.shape:
+            return self.cached_penc
+
+        self.cached_penc = None
+        batch_size, x, orig_ch = tensor.shape
+        pos_x = torch.arange(x, device=tensor.device, dtype=self.inv_freq.dtype)
+        sin_inp_x = torch.einsum("i,j->ij", pos_x, self.inv_freq)
+        emb_x = get_emb(sin_inp_x)
+        emb = torch.zeros(
+            (x, self.channels),
+            device=tensor.device,
+            dtype=(
+                self.dtype_override if self.dtype_override is not None else tensor.dtype
+            ),
+        )
+        emb[:, : self.channels] = emb_x
+
+        self.cached_penc = emb[None, :, :orig_ch].repeat(batch_size, 1, 1)
+        return self.cached_penc
 
 class Encoder(nn.Module):
-    def __init__(self, d_model=1024, nhead=8, num_encoder_layers=6, max_seq_len=512,
+    def __init__(self, d_model=1024, hidden_dim=256, nhead=8, num_encoder_layers=6, max_seq_len=512,
                  vocab_size=267, latent_dim=512):
         super().__init__()
 
         self.token_emb = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
-        self.pos_enc = nn.Parameter(torch.randn(max_seq_len, d_model))
+        self.pos_enc = PositionalEncoding1D(d_model)
+
+        self.conv = nn.Sequential(
+            nn.Conv1d(d_model, hidden_dim, kernel_size=3, padding=3 // 2),
+            nn.ReLU(),
+            nn.BatchNorm1d(hidden_dim),
+            nn.Dropout(0.1),
+        )
 
         self.transformer = nn.TransformerEncoder(
             encoder_layer=nn.TransformerEncoderLayer(
-                d_model=d_model,
+                d_model=hidden_dim,
                 nhead=nhead,
-                dim_feedforward=d_model*4,
+                dim_feedforward=hidden_dim*4,
             ),
             num_layers=num_encoder_layers,
-            norm=nn.LayerNorm(d_model),
+            norm=nn.LayerNorm(hidden_dim),
         )
 
         # Слои для VAE: получение mu и logvar
-        self.mu_layer = nn.Linear(d_model, latent_dim)
-        self.logvar_layer = nn.Linear(d_model, latent_dim)
+        self.mu_layer = nn.Linear(hidden_dim, latent_dim)
+        self.logvar_layer = nn.Linear(hidden_dim, latent_dim)
 
     def reparameterize(self, mu, logvar):
         std = torch.exp(0.5 * logvar)
@@ -34,9 +92,11 @@ class Encoder(nn.Module):
     def forward(self, x):
         # x: [batch_size, seq_len]
         seq_emb = self.token_emb(x)  # [batch_size, seq_len, d_model]
-        seq_emb = seq_emb + self.pos_enc[:x.size(1), :]  # Добавление позиционного кодирования
+        seq_emb = self.pos_enc(seq_emb.unsqueeze(0))  # Добавление позиционного кодирования
 
-        out = self.transformer(seq_emb)  # [batch_size, seq_len, d_model]
+        x = self.conv(seq_emb.permute(0, 2, 1)).permute(0, 2, 1)
+
+        out = self.transformer(x)  # [batch_size, seq_len, d_model]
 
         # Средний пулинг по оси seq_len
         x = out.mean(dim=1)  # [batch_size, d_model]
@@ -56,7 +116,7 @@ class Decoder(nn.Module):
         # Входной слой: из скрытого пространства в промежуточное
         self.input_proj = nn.Linear(latent_dim, d_model * max_seq_len)
         self.token_emb = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
-
+        self.pos_enc = PositionalEncoding1D(d_model)
         self.transformer = nn.TransformerEncoder(
             encoder_layer=nn.TransformerEncoderLayer(
                 d_model=d_model,
@@ -82,8 +142,6 @@ class Decoder(nn.Module):
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-        # Инициализация позиционного кодирования
-        nn.init.normal_(self.pos_enc, mean=0.0, std=0.02)
 
     def forward(self, z, tgt=None):
         """
@@ -99,7 +157,7 @@ class Decoder(nn.Module):
             x = self.token_emb(tgt) * math.sqrt(self.d_model)  # [batch_size, seq_len, d_model]
 
         # Добавление позиционного кодирования
-        x = x + self.pos_enc[:x.size(1), :]  # [batch_size, seq_len, d_model]
+        x = self.pos_enc(x)  # [batch_size, seq_len, d_model]
 
         # Декодирование
         output = self.transformer(x)  # [batch_size, seq_len, d_model]
