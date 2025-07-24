@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 
+
 class Encoder(nn.Module):
     def __init__(self, d_model=1024, nhead=8, num_encoder_layers=6, max_seq_len=512,
                  vocab_size=267, latent_dim=512):
@@ -29,6 +30,7 @@ class Encoder(nn.Module):
         eps = torch.randn_like(std)
         return mu + std * eps
 
+
     def forward(self, x):
         # x: [batch_size, seq_len]
         seq_emb = self.token_emb(x)  # [batch_size, seq_len, d_model]
@@ -42,9 +44,8 @@ class Encoder(nn.Module):
         # Получение mu и logvar
         mu = self.mu_layer(x)  # [batch_size, latent_dim]
         logvar = self.logvar_layer(x)  # [batch_size, latent_dim]
-        z = self.reparameterize(mu, logvar)  # [batch_size, latent_dim]
 
-        return z, mu, logvar
+        return mu, logvar
 
 
 class Decoder(nn.Module):
