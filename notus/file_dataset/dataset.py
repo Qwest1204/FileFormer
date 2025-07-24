@@ -64,11 +64,12 @@ class FileDataset(Dataset):
             real_chunk = all_tokens[i:i + self.max_seq_length]
             real_tensor = torch.tensor(real_chunk, dtype=torch.int16)
             masked_tensor, labels = self.transform_tensor(real_tensor.clone())
-            padded_masked, padded_labels = self.pad_tensors(masked_tensor, labels)
+            padded_masked, padded_labels, attention_mask = self.pad_tensors(masked_tensor, labels)
             chunk_data.append({
                 'lbl': padded_labels,
                 'iid': padded_masked,
-                'ori': real_tensor
+                'ori': real_tensor,
+                'attn_mask': attention_mask  # Add attention mask to the output
             })
         return chunk_data
 
@@ -77,7 +78,10 @@ class FileDataset(Dataset):
         real_pad = self.max_seq_length - real_len
         padded_tensor = F.pad(tensor, (0, real_pad), value=self.pad_token)
         padded_labels = F.pad(labels, (0, real_pad), value=-100)
-        return padded_tensor, padded_labels
+        # Create attention mask: 1 for real tokens, 0 for padding
+        attention_mask = torch.ones(real_len, dtype=torch.int8)
+        attention_mask = F.pad(attention_mask, (0, real_pad), value=0)
+        return padded_tensor, padded_labels, attention_mask
 
     def __len__(self):
         return len(self.data)
