@@ -62,7 +62,7 @@ class FileDataset(Dataset):
         chunk_data = []
         for i in range(0, len(all_tokens), self.max_seq_length):
             real_chunk = all_tokens[i:i + self.max_seq_length]
-            real_tensor = torch.tensor(real_chunk, dtype=torch.long)
+            real_tensor = torch.tensor(real_chunk, dtype=torch.int16)
             masked_tensor, labels = self.transform_tensor(real_tensor.clone())
             padded_masked, padded_labels = self.pad_tensors(masked_tensor, labels)
             chunk_data.append({
