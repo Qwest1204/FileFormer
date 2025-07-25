@@ -63,13 +63,15 @@ class FileDataset(Dataset):
         for i in range(0, len(all_tokens), self.max_seq_length):
             real_chunk = all_tokens[i:i + self.max_seq_length]
             real_tensor = torch.tensor(real_chunk, dtype=torch.int16)
+            real_tensor, real_tensor_mask = self.pad_sequence(real_tensor)
             masked_tensor, labels = self.transform_tensor(real_tensor.clone())
             padded_masked, padded_labels, attention_mask = self.pad_tensors(masked_tensor, labels)
             chunk_data.append({
                 'lbl': padded_labels,
                 'iid': padded_masked,
                 'ori': real_tensor,
-                'attn_mask': attention_mask  # Add attention mask to the output
+                'attn_mask': attention_mask,
+                'attn_mask_ori': real_tensor_mask
             })
         return chunk_data
 
@@ -82,6 +84,47 @@ class FileDataset(Dataset):
         attention_mask = torch.ones(real_len, dtype=torch.int8)
         attention_mask = F.pad(attention_mask, (0, real_pad), value=0)
         return padded_tensor, padded_labels, attention_mask
+
+    def pad_sequence(self, tensor):
+        """
+        Adds padding to a tensor of sequences to match the maximum sequence length.
+
+        Args:
+            tensor (torch.Tensor): Input tensor of shape [batch_size, seq_len].
+            max_seq_len (int): Maximum sequence length to pad to.
+            padding_value (int, optional): Value to use for padding. Defaults to 0.
+
+        Returns:
+            torch.Tensor: Padded tensor of shape [batch_size, max_seq_len].
+            torch.Tensor: Padding mask of shape [batch_size, max_seq_len], where True indicates padding.
+        """
+        batch_size, seq_len = tensor.shape
+
+        if seq_len > self.max_seq_length:
+            raise ValueError(f"Sequence length {seq_len} exceeds max_seq_len {self.max_seq_length}")
+
+        if seq_len == self.max_seq_length:
+            padding_mask = torch.zeros_like(tensor, dtype=torch.bool)
+            return tensor, padding_mask
+
+        # Create padded tensor
+        padded_tensor = torch.full(
+            (batch_size, self.max_seq_length),
+            fill_value=self.pad_token,
+            dtype=tensor.dtype,
+            device=tensor.device
+        )
+        padded_tensor[:, :seq_len] = tensor
+
+        # Create padding mask (True for padding positions)
+        padding_mask = torch.ones(
+            (batch_size, self.max_seq_length),
+            dtype=torch.bool,
+            device=tensor.device
+        )
+        padding_mask[:, :seq_len] = False
+
+        return padded_tensor, padding_mask
 
     def __len__(self):
         return len(self.data)

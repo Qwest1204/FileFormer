@@ -89,14 +89,14 @@ class Encoder(nn.Module):
         return mu + std * eps
 
 
-    def forward(self, x):
+    def forward(self, x, padding_mask=None):
         # x: [batch_size, seq_len]
         seq_emb = self.token_emb(x)  # [batch_size, seq_len, d_model]
         seq_emb = self.pos_enc(seq_emb.unsqueeze(0))  # Добавление позиционного кодирования
 
         x = self.conv(seq_emb.permute(0, 2, 1)).permute(0, 2, 1)
 
-        out = self.transformer(x)  # [batch_size, seq_len, d_model]
+        out = self.transformer(x, src_key_padding_mask=padding_mask)  # [batch_size, seq_len, d_model]
 
         # Средний пулинг по оси seq_len
         x = out.mean(dim=1)  # [batch_size, d_model]
