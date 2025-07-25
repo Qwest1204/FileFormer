@@ -55,7 +55,7 @@ class PositionalEncoding1D(nn.Module):
         return self.cached_penc
 
 class Encoder(nn.Module):
-    def __init__(self, d_model=1024, hidden_dim=256, nhead=8, num_encoder_layers=6, max_seq_len=512,
+    def __init__(self, d_model=1024, hidden_dim=256, nhead=8, num_encoder_layers=6,
                  vocab_size=267, latent_dim=512):
         super().__init__()
 
@@ -179,11 +179,11 @@ class EncoderDecoder(pl.LightningModule):
         self.save_hyperparameters(ignore=['encoder', 'decoder'])
 
     def training_step(self, batch, batch_idx):
-        x = batch['ori']
-        at = batch['attn_mask_ori']
+        x = batch['ori'].to(torch.long)
+        at = batch['attn_mask_ori'].unsqueeze(1).to(torch.bool)
         mu, logvar = self.encoder(x, at)
         z = self.encoder.reparameterize(mu, logvar)
-        logits = self.decoder(z, tgt=x)
+        logits = self.decoder(z.unsqueeze(0), tgt=x.unsqueeze(0))
 
         recon_loss = self.loss_fn(logits.view(-1, logits.size(-1)), x.view(-1))
         kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
