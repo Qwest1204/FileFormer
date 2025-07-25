@@ -179,8 +179,9 @@ class EncoderDecoder(pl.LightningModule):
         self.save_hyperparameters(ignore=['encoder', 'decoder'])
 
     def training_step(self, batch, batch_idx):
-        x = batch['origin']
-        mu, logvar = self.encoder(x)
+        x = batch['ori']
+        at = batch['attn_mask_ori']
+        mu, logvar = self.encoder(x, at)
         z = self.encoder.reparameterize(mu, logvar)
         logits = self.decoder(z, tgt=x)
 
@@ -192,21 +193,6 @@ class EncoderDecoder(pl.LightningModule):
         self.log("train_loss", loss, prog_bar=True)
         self.log("recon_loss", recon_loss, prog_bar=True)
         self.log("kl_loss", kl_loss, prog_bar=True)
-        return loss
-
-    def validation_step(self, batch, batch_idx):
-        x = batch['origin']
-        mu, logvar = self.encoder(x)
-        z = self.encoder.reparameterize(mu, logvar)
-        logits = self.decoder(z, tgt=x)
-
-        recon_loss = self.loss_fn(logits.view(-1, logits.size(-1)), x.view(-1))
-        kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        loss = recon_loss + self.beta * kl_loss
-
-        self.log("val_loss", loss, prog_bar=True)
-        self.log("val_recon_loss", recon_loss)
-        self.log("val_kl_loss", kl_loss)
         return loss
 
     def configure_optimizers(self):
