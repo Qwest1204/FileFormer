@@ -1,3 +1,3 @@
 __all__ = ['CompressEngine']
 
-from .engine import CompressEngine
+from .compress_unit import CompressEngine

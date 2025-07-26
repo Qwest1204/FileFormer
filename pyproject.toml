@@ -20,6 +20,7 @@ torchvision = "^0.22.0"
 torchaudio = "^2.7.0"
 torchinfo = "^1.8.0"
 torchsummary = "^1.5.1"
+gym = "^0.26.2"
 
 
 [build-system]
