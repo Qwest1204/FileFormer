@@ -21,6 +21,8 @@ torchaudio = "^2.7.0"
 torchinfo = "^1.8.0"
 torchsummary = "^1.5.1"
 gym = "^0.26.2"
+jax = "^0.7.0"
+flax = "^0.10.7"
 
 
 [build-system]
