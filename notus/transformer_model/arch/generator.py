@@ -41,9 +41,9 @@ class MultiHeadAttention(nn.Module):
         output = self.W_o(context)
         return output, attn
 
-class EncoderLayerCrossAttention(nn.Module):
+class DecoderLayerCrossAttention(nn.Module):
     def __init__(self, d_model, n_heads, d_ff, dropout=0.1):
-        super(EncoderLayerCrossAttention,self).__init__()
+        super(DecoderLayerCrossAttention,self).__init__()
         self.self_attn = MultiHeadAttention(d_model, n_heads)
         self.cross_attn = MultiHeadAttention(d_model, n_heads)
         self.feed_forward = nn.Sequential(
@@ -53,18 +53,35 @@ class EncoderLayerCrossAttention(nn.Module):
         )
         self.norm1 = nn.LayerNorm(d_model)
         self.norm2 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, context, self_attn_mask=None, cross_attn_mask=None):
         self_attn_out, self_attn_weights = self.self_attn(x, x, x, self_attn_mask)
         x = self.norm1(x + self.dropout(self_attn_out))
 
-        cross_attn_out, cross_attn_weights = self.cross_attn(x, context, context, self_attn_mask)
+        cross_attn_out, cross_attn_weights = self.cross_attn(x, context, context, cross_attn_mask)
         x = self.norm2(x + self.dropout(cross_attn_out))
 
         ff_out = self.feed_forward(x)
-        x = self.norm1(x + self.dropout(ff_out))
+        x = self.norm3(x + self.dropout(ff_out))
+
+        return x, self_attn_weights, cross_attn_weights
+
+class DecoderCrossAttention(nn.Module):
+    def __init__(self, encoder_layer, n_enc_layer):
+        super(DecoderCrossAttention, self).__init__()
+        self.layers = nn.ModuleList([encoder_layer for _ in range(n_enc_layer)])
+        self.num_layers = n_enc_layer
+
+    def forward(self, x, context, self_attn_mask=None, cross_attn_mask=None):
+        self_attn_weights = []
+        cross_attn_weights = []
+
+        for layer in self.layers:
+            x, self_attn_w, cross_attn_w = layer(x, context, self_attn_mask, cross_attn_mask)
+            self_attn_weights.append(self_attn_w)
+            cross_attn_weights.append(cross_attn_w)
 
         return x, self_attn_weights, cross_attn_weights
 
@@ -78,30 +95,27 @@ class FileTransformerBlock(nn.Module):
 
         self.pos_enc = nn.Parameter(torch.randn(max_seq_len, d_model))
 
-        self.transformer = nn.TransformerEncoder(
-            encoder_layer=nn.TransformerEncoderLayer(
+        self.decoder = DecoderCrossAttention(
+            DecoderLayerCrossAttention(
                 d_model=d_model,
-                nhead=nhead,
-                dim_feedforward=d_model,
-            ),
-            num_layers=num_encoder_layers,
-            norm=nn.LayerNorm(d_model),
+                n_heads=nhead,
+                d_ff=d_model*4),
+            num_encoder_layers
         )
 
         self.flatten = nn.Flatten()
         self.out_proj = nn.Linear(d_model, 256)
         self.norm = nn.LayerNorm(embedding_tensor)
 
-    def forward(self, emb, x):
+    def forward(self, emb, x, mask_x=None):
         emb = self.norm(emb)
         file_vec = self.file_projection(emb.flatten(1))
 
         seq_emb = self.token_emb(x)
         seq_emb += self.pos_enc[:x.size(0), None, :]
 
-        seq_emb += file_vec.unsqueeze(0)
 
-        out = self.transformer(seq_emb)
+        out, _, _ = self.decoder(seq_emb, file_vec, self_attn_mask=mask_x)
         return self.out_proj(out)
 
 # TODO: create LightningModule train class
