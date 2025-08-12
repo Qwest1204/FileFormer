@@ -24,53 +24,39 @@ class ByteLevelTokenizer:
             self.id2token[token_id] = token
 
     def encode(self, text: str) -> list:
+        if all(c in "0123456789abcdef" for c in text):  # Чистый hex
+            return [self.token2id[text[i:i+2]] for i in range(0, len(text), 2)]
         tokens = []
         i = 0
         n = len(text)
-
         while i < n:
             matched = False
-
-            # Проверка специальных токенов
             for token in self.special_tokens:
                 if text.startswith(token, i):
                     tokens.append(self.token2id[token])
                     i += len(token)
                     matched = True
                     break
-
-            # Обработка обычных символов
             if not matched:
-                char = text[i]
-                byte_repr = char.encode('utf-8')
-                for b in byte_repr:
-                    hex_byte = format(b, '02x')
-                    tokens.append(self.token2id[hex_byte])
-                i += 1
-
+                char = text[i:i+2]  # Бери сразу 2 символа для hex
+                tokens.append(self.token2id.get(char, self.token2id["<unk>"]))
+                i += 2
         return tokens
 
     def decode(self, token_ids: list) -> str:
         parts = []
         byte_buffer = bytearray()
-
         for token_id in token_ids:
             token = self.id2token.get(token_id, "<unk>")
-
             if token in self.special_tokens:
-                # Декодируем накопленные байты
                 if byte_buffer:
-                    parts.append(byte_buffer.decode('utf-8'))
+                    parts.append(byte_buffer.hex())
                     byte_buffer.clear()
                 parts.append(token)
             else:
-                # Добавляем байт в буфер
                 byte_buffer.append(int(token, 16))
-
-        # Декодируем оставшиеся байты
         if byte_buffer:
-            parts.append(byte_buffer.decode('utf-8'))
-
+            parts.append(byte_buffer.hex())
         return ''.join(parts)
 
     @property
