@@ -6,10 +6,11 @@ from pathlib import Path
 from tqdm import tqdm
 
 class FileDataset(Dataset):
-    def __init__(self, path, max_seq_length, tokenizer):
+    def __init__(self, path, max_seq_length, tokenizer, n):
         self.tokenizer = tokenizer
         self.files = [x for x in Path(path).glob('**/*') if x.is_file()]
         self.max_seq_length = max_seq_length
+        self.n = n
         self.pad_token = self.tokenizer.encode("<pad>")[0]
         self.mask_token = self.tokenizer.encode("<mask>")[0]
         self.file_token_lengths = []
@@ -99,11 +100,33 @@ class FileDataset(Dataset):
 
         mask_masked = (labels_padded != -100).to(torch.int8)
 
+        # Create extended tensor
+        extended_tokens = []
+        current_pos = start
+        remaining = self.max_seq_length * self.n
+        file_len = len(all_tokens)
+        if file_len == 0:
+            # Handle empty file, though unlikely
+            extended_tokens = [self.pad_token] * remaining
+        else:
+            while remaining > 0:
+                available = file_len - current_pos
+                if available <= 0:
+                    current_pos = 0
+                    available = file_len
+                take = min(remaining, available)
+                extended_tokens.extend(all_tokens[current_pos:current_pos + take])
+                current_pos += take
+                remaining -= take
+
+        extended_tensor = torch.tensor(extended_tokens, dtype=torch.int16)
+
         return {
             'lbl': labels_padded,
             'iid': masked_padded,
             'ori': ori_padded,
             'attn_mask': attn_mask,
             'attn_mask_ori': attn_mask_ori,
-            'mask': mask_masked
+            'mask': mask_masked,
+            'extended': extended_tensor
         }
