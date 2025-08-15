@@ -26,7 +26,7 @@ class FileDataset(Dataset):
         all_tokens = []
         with open(file, 'rb') as f:
             while True:
-                byte_chunk = f.read(4096)
+                byte_chunk = f.read()
                 if not byte_chunk:
                     break
                 hex_chunk = byte_chunk.hex()
@@ -42,7 +42,7 @@ class FileDataset(Dataset):
 
         i = 0
         while i < seq_len:
-            k = random.choice([0, 1, 2, 4])
+            k = 4
             start_index = i + 1
             end_index = min(start_index + k, seq_len)
 
