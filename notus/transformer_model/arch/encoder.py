@@ -1,15 +1,86 @@
 import torch
 import torch.nn as nn
+from notus.transformer_model.arch.attention import SelfAttention, MultiHeadAttention, MultiQueryAttention
+from notus.transformer_model.arch.mlp import MLP
 
-class EncoderGRU(nn.Module):
-    def __init__(self, vocab, emb_dim, hash_dim):
-        super().__init__()
-        self.embedding = nn.Embedding(vocab, emb_dim)
-        self.gru = nn.GRU(emb_dim, hash_dim, num_layers=1, batch_first=True)
-        self.norm = nn.LayerNorm(hash_dim)
+class EncoderBlock(nn.Module):
+    def __init__(self, attention_type: str,
+                 dim_ff: int,
+                 num_heads: int,
+                 embedding_dim: int,
+                 activation_type: str,
+                 dropout: float,
+                 ):
+        super(EncoderBlock, self).__init__()
+        # define attention
+        self.head_dim = embedding_dim // num_heads
+        if attention_type == "SelfAttention":
+            self.attention = SelfAttention(embedding_dim, self.head_dim)
+        if attention_type == "MultiHeadAttention":
+            self.attention = MultiHeadAttention(embedding_dim, num_heads)
+        if attention_type == "MultiQueryAttention":
+            self.attention = MultiQueryAttention(embedding_dim, num_heads)
+        else:
+            assert "Unknown attention type, avai: SelfAttention, MultiHeadAttention, MultiQueryAttention"
+        #define mpl
+        self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
+        self.norm1 = nn.LayerNorm(embedding_dim)
+        self.norm2 = nn.LayerNorm(embedding_dim)
+        self.dropout = nn.Dropout(dropout)
 
-    def forward(self, chunk):  # chunk: [batch, 256000]
-        embedded = self.embedding(chunk)  # [batch, 256000, embed_dim]
-        _, hidden = self.gru(embedded)  # hidden: [1, batch, hash_dim]
-        hash_emb = self.norm(hidden[-1])  # [batch, hash_dim]
-        return hash_emb
+    def forward(self, q, k, v, mask=None):
+        attention = self.attention(q, k, v, mask=mask)
+
+        x = self.dropout(self.norm1(attention + q))
+        forward = self.mlp(x)
+        out = self.dropout(self.norm2(forward+x))
+        return out
+
+class Encoder(nn.Module):
+    def __init__(self,
+                 vocab_size: int,
+                 embedding_dim: int,
+                 file_type_vocab: int,
+                 num_heads: int,
+                 num_layers: int,
+                 device: str,
+                 d_ff: int,
+                 dropout: float,
+                 hash_len: int,
+                 attention_type: str,
+                 activation_type = 'relu'
+                 ):
+        super(Encoder, self).__init__()
+        self.emb_size = embedding_dim
+        self.device = device
+        self.file_type_emb = nn.Embedding(file_type_vocab, embedding_dim)
+        self.hash_emb = nn.Embedding(vocab_size, embedding_dim)
+        self.pe = nn.Embedding(hash_len+1, embedding_dim)
+
+        self.layers = nn.ModuleList(
+            [
+                EncoderBlock(
+                    attention_type=attention_type,
+                    dim_ff=d_ff,
+                    num_heads=num_heads,
+                    embedding_dim=embedding_dim,
+                    dropout=dropout,
+                    activation_type=activation_type,
+
+                )
+                for _ in range(num_layers)
+
+            ]
+        )
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, hash, type, mask=None):
+        N, seqlen = hash.shape
+        out = torch.cat([self.hash_emb(hash), self.file_type_emb(type)], dim=1)
+        pos = torch.arange(0, seqlen+1).expand(N, seqlen+1).to(self.device)
+        out = self.dropout(
+            (out + self.pe(pos))
+        )
+        for layer in self.layers:
+            out = layer(out, out, out, mask)
+        return out
