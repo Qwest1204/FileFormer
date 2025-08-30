@@ -1,8 +1,8 @@
 encoder:
   vocab_size: 764
   embedding_dim: 256
-  num_heads: 8
-  num_layers: 16
+  num_heads: 4
+  num_layers: 8
   d_ff: 512
   dropout: 0.1
   hash_len: 512
@@ -10,3 +10,11 @@ encoder:
   device: "cpu"
   attention_type: "MultiQueryAttention"
 decoder:
+  vocab_size: 764
+  embedding_dim: 256
+  num_heads: 8
+  num_layers: 16
+  d_ff: 512
+  dropout: 0.1
+  chunk_size: 2048
+  device: "cpu"
