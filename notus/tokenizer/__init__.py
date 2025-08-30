@@ -1,4 +1,3 @@
-__all__ = ['Tokenizer', 'ByteLevelTokenizer']
+__all__ = ['ByteLevelTokenizer']
 
-from .BPE import BPETokenizerSimple as Tokenizer
 from .BLT import ByteLevelTokenizer
