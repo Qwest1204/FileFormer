@@ -4,129 +4,76 @@ from torch.utils.data import Dataset
 import torch.nn.functional as F
 from pathlib import Path
 from tqdm import tqdm
+import hashlib
+from notus.tokenizer import ByteLevelTokenizer
+import pandas as pd
+from notus.tokenizer.utils import get_file_ext_as_token
 
 class FileDataset(Dataset):
-    def __init__(self, path, max_seq_length, tokenizer, n):
-        self.tokenizer = tokenizer
+    def __init__(self, path, seq_len, batch_size):
         self.files = [x for x in Path(path).glob('**/*') if x.is_file()]
-        self.max_seq_length = max_seq_length
-        self.n = n
+        self.tokenizer = ByteLevelTokenizer()
+        self.seq_len = seq_len
         self.pad_token = self.tokenizer.encode("<pad>")[0]
         self.mask_token = self.tokenizer.encode("<mask>")[0]
-        self.file_token_lengths = []
-        self.total_chunks = 0
-        for file in tqdm(self.files):
-            all_tokens = self.read_and_tokenize(file)
-            num_tokens = len(all_tokens)
-            num_chunks = (num_tokens + self.max_seq_length - 1) // self.max_seq_length
-            self.file_token_lengths.append(num_tokens)
-            self.total_chunks += num_chunks
+        self.table_init_data = pd.DataFrame(columns=["id", "file_name", "start_byte", "end_byte"], index=[0])
 
-    def read_and_tokenize(self, file):
-        all_tokens = []
-        with open(file, 'rb') as f:
+    def prepare(self):
+        byte_len = 0
+        for i in range(len(self.files)):
+            num_chuncs_of_seq_len = (self.files[i].stat().st_size//self.seq_len)
+            new_data = pd.DataFrame({'id': i, 'file_name': str(self.files[i]), 'start_byte': byte_len, 'end_byte':num_chuncs_of_seq_len+byte_len}, index=[0])
+            self.table_init_data = pd.concat([self.table_init_data, new_data])
+            byte_len = num_chuncs_of_seq_len+byte_len+1
+
+    def get_file_name_by_byte(self, byte_value):
+        for index, row in self.table_init_data.iterrows():
+            if row['start_byte'] <= byte_value <= row['end_byte']:
+                return row['file_name'], row['start_byte'], row['end_byte']
+        return None
+
+    def read_file(self, file_name, start_pos):
+        pads = torch.ones((1, self.seq_len))
+        with open(file_name, 'rb') as f:
+            f.seek(start_pos)
+            data = f.read(self.seq_len).hex()
+            tokens = self.tokenizer.encode(data)
+            if len(tokens) < self.seq_len:
+                pads = torch.tensor([[1]*len(tokens), [0]*(self.seq_len - len(tokens))])
+                tokens.extend([self.pad_token]*(self.seq_len - len(tokens)))
+        f.close()
+        return torch.tensor(tokens, dtype=torch.long), pads
+
+    def mask_tokens(self, x):
+        masked = x.clone()
+        for i in range(self.seq_len):
+            if masked[i] == self.pad_token:
+                pass
+            if random.random() < 0.5:
+                masked[i] = torch.tensor(self.mask_token)
+        return masked
+
+    def get_hesh_tokens(self, file_name):
+        sha256_hash = hashlib.new('sha256')
+        with open(file_name, 'rb') as f:
             while True:
-                byte_chunk = f.read()
-                if not byte_chunk:
+                data = f.read(1024)
+                if not data:
                     break
-                hex_chunk = byte_chunk.hex()
-                tokens = self.tokenizer.encode(hex_chunk)
-                all_tokens.extend(tokens)
-        return all_tokens
-
-    def transform_tensor(self, input_tensor):
-        """Улучшенная функция маскирования с возвратом лейблов"""
-        seq_len = input_tensor.size(0)
-        output_tensor = input_tensor.clone()
-        labels = torch.full_like(input_tensor, fill_value=-100)
-
-        i = 0
-        while i < seq_len:
-            k = 4
-            start_index = i + 1
-            end_index = min(start_index + k, seq_len)
-
-            for j in range(start_index, end_index):
-                labels[j] = input_tensor[j].item()
-                output_tensor[j] = self.mask_token
-
-            i = end_index
-
-        return output_tensor, labels
-
-    def pad_tensors(self, tensor, labels):
-        real_len = len(tensor)
-        real_pad = self.max_seq_length - real_len
-        padded_tensor = F.pad(tensor, (0, real_pad), value=self.pad_token)
-        padded_labels = F.pad(labels, (0, real_pad), value=-100)
-        attention_mask = torch.ones(real_len, dtype=torch.int8)
-        attention_mask = F.pad(attention_mask, (0, real_pad), value=0)
-        return padded_tensor, padded_labels, attention_mask
-
-    def pad_sequence(self, tensor):
-        real_len = len(tensor)
-        real_pad = self.max_seq_length - real_len
-        padded_tensor = F.pad(tensor, (0, real_pad), value=self.pad_token)
-        attention_mask = torch.ones(real_len, dtype=torch.int8)
-        attention_mask = F.pad(attention_mask, (0, real_pad), value=0)
-        return padded_tensor, attention_mask
+                sha256_hash.update(data)
+        sha256_hash = sha256_hash.hexdigest()
+        sha256_hash_tokens = self.tokenizer.encode(sha256_hash)
+        return torch.tensor(sha256_hash_tokens, dtype=torch.long)
 
     def __len__(self):
-        return self.total_chunks
+        return self.table_init_data['end_byte'].max()
 
-    def __getitem__(self, idx):
-        if idx >= self.total_chunks or idx < 0:
-            raise IndexError(f"Index {idx} out of range")
+    def __getitem__(self, index):
+        info = self.get_file_name_by_byte(index)
+        tokens, pads = self.read_file(info[0], info[1])
+        masked_tokens = self.mask_tokens(tokens)
+        hash = self.get_hesh_tokens(info[0])
 
-        cum_chunks = 0
-        for f_idx, num_tokens in enumerate(self.file_token_lengths):
-            num_chunks = (num_tokens + self.max_seq_length - 1) // self.max_seq_length
-            if idx < cum_chunks + num_chunks:
-                local_chunk_idx = idx - cum_chunks
-                break
-            cum_chunks += num_chunks
+        extention_tokenize = torch.tensor([get_file_ext_as_token(info[0])], dtype=torch.long)
 
-        all_tokens = self.read_and_tokenize(self.files[f_idx])
-
-        start = local_chunk_idx * self.max_seq_length
-        end = min(start + self.max_seq_length, len(all_tokens))
-        real_chunk = all_tokens[start:end]
-
-        real_tensor = torch.tensor(real_chunk, dtype=torch.int16)
-        ori_padded, attn_mask_ori = self.pad_sequence(real_tensor)
-
-        masked_tensor, labels = self.transform_tensor(real_tensor.clone())
-        masked_padded, labels_padded, attn_mask = self.pad_tensors(masked_tensor, labels)
-
-        mask_masked = (labels_padded != -100).to(torch.int8)
-
-        # Create extended tensor
-        extended_tokens = []
-        current_pos = start
-        remaining = self.max_seq_length * self.n
-        file_len = len(all_tokens)
-        if file_len == 0:
-            # Handle empty file, though unlikely
-            extended_tokens = [self.pad_token] * remaining
-        else:
-            while remaining > 0:
-                available = file_len - current_pos
-                if available <= 0:
-                    current_pos = 0
-                    available = file_len
-                take = min(remaining, available)
-                extended_tokens.extend(all_tokens[current_pos:current_pos + take])
-                current_pos += take
-                remaining -= take
-
-        extended_tensor = torch.tensor(extended_tokens, dtype=torch.int16)
-
-        return {
-            'lbl': labels_padded,
-            'iid': masked_padded,
-            'ori': ori_padded,
-            'attn_mask': attn_mask,
-            'attn_mask_ori': attn_mask_ori,
-            'mask': mask_masked,
-            'extended': extended_tensor
-        }
+        return tokens, masked_tokens, pads, hash, extention_tokenize
