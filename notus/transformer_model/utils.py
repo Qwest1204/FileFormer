@@ -11,7 +11,7 @@ def load_config(conf_path: str) -> dict:
 def save_model(model, config: dict, model_name: str) -> None:
     try:
         torch.save({"model":model.state_dict(),
-                        "config": config}, "./weights/"+model_name)
+                        "config": config}, model_name)
         print("successfully saved model")
     except Exception as e:
         print(e)

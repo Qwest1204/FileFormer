@@ -1,20 +1,30 @@
 encoder:
-  vocab_size: 764
+  vocab_size: 258
+  embedding_dim: 256
+  num_heads: 4
+  num_layers: 8
+  hash_len: 32
+  d_ff: 512
+  dropout: 0.1
+  file_type_vocab: 213
+  device: "cpu"
+  attention_type: "MultiQueryAttention"
+decoder:
+  vocab_size: 258
   embedding_dim: 256
   num_heads: 4
   num_layers: 8
   d_ff: 512
   dropout: 0.1
-  hash_len: 512
-  file_type_vocab: 213
-  device: "cpu"
-  attention_type: "MultiQueryAttention"
-decoder:
-  vocab_size: 764
-  embedding_dim: 256
-  num_heads: 8
-  num_layers: 16
-  d_ff: 512
-  dropout: 0.1
   chunk_size: 2048
   device: "cpu"
+dataset:
+  seq_len: 2048
+  path: "/Users/daniilogorodnikov/dataset/test"
+train:
+  num_epoch: 50
+  lr: 0.001
+  device: "cpu"
+  batch_size: 2
+  num_workers: 0
+

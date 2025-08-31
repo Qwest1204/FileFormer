@@ -27,12 +27,13 @@ class DecoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, context, padding_mask=None):
+
         self_attention_out = self.self_attention(x, x, x, mask=padding_mask)
         self_attention_out = self.dropout(self_attention_out)
 
         x = self.norm1(x + self_attention_out)
 
-        cross_attention_out = self.cross_attention(x, context, context, mask=padding_mask)
+        cross_attention_out = self.cross_attention(x, context, context, mask=None)
         cross_attention_out = self.dropout(cross_attention_out)
 
         x = self.norm2(x + cross_attention_out)
@@ -76,6 +77,8 @@ class Decoder(nn.Module):
             ]
         )
         self.dropout = nn.Dropout(dropout)
+        self.final_linear = nn.Linear(embedding_dim, vocab_size)
+
 
     def forward(self, x, context, padding_mask=None):
         # x: (bs, seq_len)
@@ -89,4 +92,4 @@ class Decoder(nn.Module):
         )
         for layer in self.layers:
             out = layer(out, context, padding_mask=padding_mask)
-        return out
+        return self.final_linear(out)

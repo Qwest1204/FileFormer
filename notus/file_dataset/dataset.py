@@ -10,7 +10,7 @@ import pandas as pd
 from notus.tokenizer.utils import get_file_ext_as_token
 
 class FileDataset(Dataset):
-    def __init__(self, path, seq_len, batch_size):
+    def __init__(self, path, seq_len):
         # Initialize dataset with file path, sequence length, and batch size
         self.files = [x for x in Path(path).glob('**/*') if x.is_file()]
         self.tokenizer = ByteLevelTokenizer()  # Initialize byte-level tokenizer

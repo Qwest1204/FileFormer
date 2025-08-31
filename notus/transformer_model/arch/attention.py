@@ -86,6 +86,7 @@ class MultiQueryAttention(nn.Module):
 
     def forward(self, q, k, v, mask=None):
         bs, seqlen, dim = q.shape
+        _, seq_len_k, _ = k.shape
 
         Q = self.Q_layer(q) # (bs, seq_len, num_heads*head_dim)
         K = self.K_layer(k) # (bs, seq_len, head_dim)
@@ -96,14 +97,13 @@ class MultiQueryAttention(nn.Module):
         V_exp = V.unsqueeze(1)
 
         attention_scores = torch.matmul(Q, K_t) * self.scale_param #[bs, num_heads, seq_len_q, seq_len_k]
-
         if mask is not None:
-            mask = mask.unsqueeze(1).unsqueeze(2)
+            mask = mask.unsqueeze(1)
             attention_scores = attention_scores.masked_fill(mask == 0, float('-inf'))
 
         attention_weights = F.softmax(attention_scores, dim=-1) # (bs, num_heads, seq_len_q, seq_len_k)
-
-        output = torch.matmul(attention_weights, V_exp).transpose(1, 2).contiguous().view(bs, seqlen, dim)
+        output = torch.matmul(attention_weights, V_exp)
+        output = output.transpose(1, 2).contiguous().view(bs, seqlen, self.num_heads * self.head_dim)
         return self.fc_out(output)
 
 class MultiHeadLatentAttention(nn.Module):
