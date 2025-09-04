@@ -55,12 +55,15 @@ class FileDataset(Dataset):
     def mask_tokens(self, x):
         # Randomly mask tokens (except padding tokens) with a 50% probability
         masked = x.clone()
-        for i in range(self.seq_len):
-            if masked[i] == self.pad_token:
-                continue  # Skip padding tokens
-            if random.random() < 0.5:
-                masked[i] = torch.tensor(self.mask_token)  # Replace with mask token
-        return masked
+        if random.random() > 0.6:
+            return masked
+        else:
+            for i in range(self.seq_len):
+                if masked[i] == self.pad_token:
+                    continue  # Skip padding tokens
+                if random.random() < 0.5:
+                    masked[i] = torch.tensor(self.mask_token)  # Replace with mask token
+            return masked
 
     def get_hesh_tokens(self, file_name):
         # Compute SHA-256 hash of a file and tokenize it
