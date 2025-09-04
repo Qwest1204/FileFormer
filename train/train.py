@@ -1,4 +1,4 @@
-from notus import Encoder, Decoder, utils, FileDataset
+from notus import Encoder, Decoder, utils, FileDataset, Muon
 import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
@@ -25,7 +25,7 @@ decoder = Decoder(**configs['decoder']).to(device)
 print("encoder successfully loaded, num paramns: ", sum(p.numel() for p in encoder.parameters() if p.requires_grad))
 print("decoder successfully loaded, num paramns: ", sum(p.numel() for p in decoder.parameters() if p.requires_grad))
 #optims
-optimizer = optim.AdamW(list(encoder.parameters()) + list(decoder.parameters()), lr=configs['train']['lr'])
+optimizer = Muon(iter(list(encoder.parameters()) + list(decoder.parameters())), lr=configs['train']['lr'])
 
 #loss
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
