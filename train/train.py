@@ -25,7 +25,7 @@ decoder = Decoder(**configs['decoder']).to(device)
 print("encoder successfully loaded, num paramns: ", sum(p.numel() for p in encoder.parameters() if p.requires_grad))
 print("decoder successfully loaded, num paramns: ", sum(p.numel() for p in decoder.parameters() if p.requires_grad))
 #optims
-optimizer = optim.Adam(list(encoder.parameters()) + list(decoder.parameters()), lr=configs['train']['lr'])
+optimizer = optim.AdamW(list(encoder.parameters()) + list(decoder.parameters()), lr=configs['train']['lr'])
 
 #loss
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
@@ -70,8 +70,8 @@ def main():
 
         print("avg_loss: ", avg_loss)
 
-        utils.save_model(encoder, configs['encoder'], f"encoder_{epoch_number}.pth")
-        utils.save_model(decoder, configs['decoder'], f"decoder{epoch_number}.pth")
+        utils.save_model(encoder, optimizer, configs['encoder'], f"encoder_{epoch_number}.pth")
+        utils.save_model(decoder, optimizer, configs['decoder'], f"decoder{epoch_number}.pth")
 
         epoch_number += 1
 
