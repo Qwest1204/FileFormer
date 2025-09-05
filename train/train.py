@@ -5,7 +5,7 @@ import torch.optim as optim
 from tqdm import tqdm
 
 #configs
-configs = utils.load_config("../config/config.yml")
+configs = utils.load_config("/Users/daniilogorodnikov/PycharmProjects/Notus/config/config.yml")
 device = configs['train']["device"]
 print("configs successfully loaded, used device: ", device)
 
@@ -25,7 +25,7 @@ decoder = Decoder(**configs['decoder']).to(device)
 print("encoder successfully loaded, num paramns: ", sum(p.numel() for p in encoder.parameters() if p.requires_grad))
 print("decoder successfully loaded, num paramns: ", sum(p.numel() for p in decoder.parameters() if p.requires_grad))
 #optims
-optimizer = Muon(iter(list(encoder.parameters()) + list(decoder.parameters())), lr=configs['train']['lr'])
+optimizer = optim.AdamW(list(encoder.parameters()) + list(decoder.parameters()), lr=configs['train']['lr'])
 
 #loss
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
