@@ -107,13 +107,18 @@ class FileDataset(Dataset):
             hex_hash = sha256_hash.hexdigest()
             hash_tokens = self.tokenizer.encode(hex_hash)
 
-            # Проверяем валидность токенов хеша
-            hash_tokens = [t if t < self.vocab_size else self.pad_token for t in hash_tokens]
+            # Фиксированная длина для хеша - 64 токена
+            if len(hash_tokens) > 64:
+                hash_tokens = hash_tokens[:64]  # Обрезаем если слишком длинный
+            else:
+                # Дополняем до 64 токенов
+                hash_tokens.extend([self.pad_token] * (64 - len(hash_tokens)))
+
             return torch.tensor(hash_tokens, dtype=torch.long)
 
         except Exception as e:
             print(f"Ошибка вычисления хеша {file_name}: {e}")
-            return torch.tensor([self.pad_token] * 64, dtype=torch.long)  # SHA256 всегда имеет длину 64 символа
+            return torch.tensor([self.pad_token] * 64, dtype=torch.long)  # Всегда возвращаем 64 токена  # SHA256 всегда имеет длину 64 символа
 
     def __len__(self):
         return int(self.table_init_data['end_byte'].max() + 1) if not self.table_init_data.empty else 0
