@@ -34,57 +34,23 @@ class FileFormer(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         tokens, masked_tokens, pads, hash, extention_tokenize = batch
-
-        # Проверка входных данных
-        self._check_for_nan(tokens, "tokens")
-        self._check_for_nan(masked_tokens, "masked_tokens")
-        self._check_for_nan(hash, "hash")
-        self._check_for_nan(extention_tokenize, "extention_tokenize")
-
         encoder_out = self.encoder(hash, extention_tokenize)
-        self._check_for_nan(encoder_out, "encoder_out")
 
         decoder_out = self.decoder(masked_tokens, encoder_out, pads)
-        self._check_for_nan(decoder_out, "decoder_out")
 
-        # Расчет лосса
         loss = self.loss_fn(
             decoder_out.view(-1, self.config['encoder']['vocab_size']),
             tokens.view(-1)
         )
 
-        # Проверка лосса и градиентов
-        if torch.isnan(loss).any():
-            self._log_nan_metrics(decoder_out, tokens)
-            raise ValueError("Обнаружен NaN в лоссе!")
-
         self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
 
-        # Ручная оптимизация с проверкой градиентов
         opt = self.optimizers()
         opt.zero_grad()
-        self.manual_backward(loss)
 
-        # Проверка градиентов
-        self._check_gradients()
         opt.step()
 
         return loss
-
-    def _check_for_nan(self, tensor, name):
-        if torch.isnan(tensor).any():
-            raise ValueError(f"Обнаружен NaN в {name}")
-
-    def _check_gradients(self):
-        for name, param in self.named_parameters():
-            if param.grad is not None and torch.isnan(param.grad).any():
-                raise ValueError(f"Обнаружен NaN в градиенте {name}")
-
-    def _log_nan_metrics(self, decoder_out, tokens):
-        # Логирование дополнительной информации при NaN
-        self.log("nan/decoder_out_mean", decoder_out.mean())
-        self.log("nan/tokens_mean", tokens.mean())
-        self.log("nan/decoder_out_std", decoder_out.std())
 
     def configure_optimizers(self):
         optimizer = optim.AdamW(

@@ -151,8 +151,7 @@ class FileDataset(Dataset):
             return tokens, masked_tokens, pads, hash, extention_tokenize
 
         except Exception as e:
-            print(f"Ошибка в __getitem__ для индекса {index}: {e}")
-            # Возвращаем пустые данные в случае ошибки
+            print(f"Error in __getitem__ for index {index}: {e}")
             empty_tokens = torch.full((self.seq_len,), self.pad_token)
             empty_mask = torch.zeros((1, self.seq_len))
             empty_hash = torch.tensor([self.pad_token] * 64, dtype=torch.long)
