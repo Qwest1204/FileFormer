@@ -102,7 +102,3 @@ class Encoder(nn.Module):
                     nn.init.xavier_uniform_(layer.attention.w_k.weight)
                     nn.init.xavier_uniform_(layer.attention.w_v.weight)
                     nn.init.xavier_uniform_(layer.attention.w_o.weight)
-
-            if hasattr(layer, 'mlp'):
-                nn.init.xavier_uniform_(layer.mlp.linear1.weight)
-                nn.init.xavier_uniform_(layer.mlp.linear2.weight)
