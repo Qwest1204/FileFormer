@@ -72,6 +72,9 @@ class Encoder(nn.Module):
 
             ]
         )
+
+        self._init_weights()
+
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, hash, type, mask=None):
@@ -84,3 +87,22 @@ class Encoder(nn.Module):
         for layer in self.layers:
             out = layer(out, out, out, mask)
         return out
+
+    def _init_weights(self):
+        # Инициализация эмбеддингов
+        nn.init.xavier_uniform_(self.file_type_emb.weight)
+        nn.init.xavier_uniform_(self.hash_emb.weight)
+        nn.init.xavier_uniform_(self.pe.weight)
+
+        # Инициализация для каждого слоя
+        for layer in self.layers:
+            if hasattr(layer, 'attention'):
+                if hasattr(layer.attention, 'w_q'):
+                    nn.init.xavier_uniform_(layer.attention.w_q.weight)
+                    nn.init.xavier_uniform_(layer.attention.w_k.weight)
+                    nn.init.xavier_uniform_(layer.attention.w_v.weight)
+                    nn.init.xavier_uniform_(layer.attention.w_o.weight)
+
+            if hasattr(layer, 'mlp'):
+                nn.init.xavier_uniform_(layer.mlp.linear1.weight)
+                nn.init.xavier_uniform_(layer.mlp.linear2.weight)
