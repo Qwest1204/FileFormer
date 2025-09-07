@@ -8,85 +8,148 @@ import hashlib
 from notus.tokenizer import ByteLevelTokenizer
 import pandas as pd
 from notus.tokenizer.utils import get_file_ext_as_token
+import numpy as np
 
 class FileDataset(Dataset):
-    def __init__(self, path, seq_len):
-        # Initialize dataset with file path, sequence length, and batch size
-        self.files = [x for x in Path(path).glob('**/*') if x.is_file()]
-        self.tokenizer = ByteLevelTokenizer()  # Initialize byte-level tokenizer
-        self.seq_len = seq_len  # Set sequence length for tokenization
-        self.pad_token = self.tokenizer.encode("<pad>")[0]  # Token for padding
-        self.mask_token = self.tokenizer.encode("<mask>")[0]  # Token for masking
-        self.table_init_data = pd.DataFrame(columns=["id", "file_name", "start_byte", "end_byte"], index=[0])  # DataFrame to track file metadata
+    def __init__(self, path, seq_len, vocab_size):
+        self.files = [x for x in Path(path).glob('**/*') if x.is_file() and x.stat().st_size > 0]  # Исключаем пустые файлы
+        self.tokenizer = ByteLevelTokenizer()
+        self.seq_len = seq_len
+        self.vocab_size = vocab_size  # Добавляем проверку размера словаря
+        self.pad_token = self.tokenizer.encode("<pad>")[0]
+        self.mask_token = self.tokenizer.encode("<mask>")[0]
+        self.table_init_data = pd.DataFrame(columns=["id", "file_name", "start_byte", "end_byte"])
 
     def prepare(self):
-        # Prepare metadata for files, mapping byte ranges to files
         byte_len = 0
-        for i in range(len(self.files)):
-            num_chuncs_of_seq_len = (self.files[i].stat().st_size // self.seq_len)  # Calculate number of sequence-length chunks
-            new_data = pd.DataFrame({
-                'id': i,
-                'file_name': str(self.files[i]),
-                'start_byte': byte_len,
-                'end_byte': num_chuncs_of_seq_len + byte_len
-            }, index=[0])
-            self.table_init_data = pd.concat([self.table_init_data, new_data])  # Append file metadata
-            byte_len = num_chuncs_of_seq_len + byte_len + 1
+        for i, file_path in enumerate(self.files):
+            try:
+                file_size = file_path.stat().st_size
+                if file_size == 0:
+                    continue  # Пропускаем пустые файлы
+
+                num_chunks = (file_size + self.seq_len - 1) // self.seq_len  # Корректное вычисление чанков
+                new_data = pd.DataFrame({
+                    'id': [i],
+                    'file_name': [str(file_path)],
+                    'start_byte': [byte_len],
+                    'end_byte': [byte_len + num_chunks - 1]
+                })
+                self.table_init_data = pd.concat([self.table_init_data, new_data], ignore_index=True)
+                byte_len += num_chunks
+            except Exception as e:
+                print(f"Ошибка обработки файла {file_path}: {e}")
+                continue
 
     def get_file_name_by_byte(self, byte_value):
-        # Retrieve file name and byte range for a given byte value
-        for index, row in self.table_init_data.iterrows():
-            if row['start_byte'] <= byte_value <= row['end_byte']:
-                return row['file_name'], row['start_byte'], row['end_byte']
-        return None  # Return None if no matching file is found
+        try:
+            row = self.table_init_data[
+                (self.table_init_data['start_byte'] <= byte_value) &
+                (self.table_init_data['end_byte'] >= byte_value)
+                ].iloc[0]
+            return row['file_name'], row['start_byte'], row['end_byte']
+        except IndexError:
+            return None
 
     def read_file(self, file_name, start_pos):
-        # Read and tokenize a chunk of a file starting at start_pos
-        pads = torch.ones((1, self.seq_len))  # Initialize padding tensor
-        with open(file_name, 'rb') as f:
-            f.seek(start_pos)  # Move to the specified byte position
-            data = f.read(self.seq_len).hex()  # Read and convert to hex
-            tokens = self.tokenizer.encode(data)  # Tokenize the data
-            if len(tokens) < self.seq_len:
-                pads = torch.tensor([[1] * len(tokens) + [0] * (self.seq_len - len(tokens))])  # Create padding mask
-                tokens.extend([self.pad_token] * (self.seq_len - len(tokens)))  # Pad tokens to seq_len
-        return torch.tensor(tokens, dtype=torch.long), pads
+        try:
+            with open(file_name, 'rb') as f:
+                f.seek(start_pos * self.seq_len)  # Умножаем на seq_len для получения байтовой позиции
+                data = f.read(self.seq_len)
+
+                if len(data) == 0:
+                    return torch.full((self.seq_len,), self.pad_token), torch.zeros((1, self.seq_len))
+
+                # Конвертируем байты в hex строку для токенизации
+                hex_data = data.hex()
+                tokens = self.tokenizer.encode(hex_data)
+
+                # Обрезаем или дополняем до seq_len
+                if len(tokens) > self.seq_len:
+                    tokens = tokens[:self.seq_len]
+                    padding_mask = torch.ones((1, self.seq_len))
+                else:
+                    padding_mask = torch.cat([
+                        torch.ones((1, len(tokens))),
+                        torch.zeros((1, self.seq_len - len(tokens)))
+                    ], dim=1)
+                    tokens.extend([self.pad_token] * (self.seq_len - len(tokens)))
+
+                # Проверяем валидность токенов
+                tokens = [t if t < self.vocab_size else self.pad_token for t in tokens]
+                return torch.tensor(tokens, dtype=torch.long), padding_mask
+
+        except Exception as e:
+            print(f"Ошибка чтения файла {file_name}: {e}")
+            return torch.full((self.seq_len,), self.pad_token), torch.zeros((1, self.seq_len))
 
     def mask_tokens(self, x):
-        # Randomly mask tokens (except padding tokens) with a 50% probability
         masked = x.clone()
         if random.random() > 0.6:
             return masked
-        else:
-            for i in range(self.seq_len):
-                if masked[i] == self.pad_token:
-                    continue  # Skip padding tokens
-                if random.random() < 0.5:
-                    masked[i] = torch.tensor(self.mask_token)  # Replace with mask token
-            return masked
+
+        # Маскируем только не-pad токены
+        non_pad_indices = (masked != self.pad_token).nonzero(as_tuple=True)[0]
+        if len(non_pad_indices) > 0:
+            mask_indices = random.sample(non_pad_indices.tolist(),
+                                         k=max(1, int(len(non_pad_indices) * 0.15)))
+            masked[mask_indices] = self.mask_token
+
+        return masked
 
     def get_hesh_tokens(self, file_name):
-        # Compute SHA-256 hash of a file and tokenize it
-        sha256_hash = hashlib.new('sha256')
-        with open(file_name, 'rb') as f:
-            while True:
-                data = f.read(1024)  # Read file in 1KB chunks
-                if not data:
-                    break
-                sha256_hash.update(data)
-        sha256_hash = sha256_hash.hexdigest()  # Get hex representation of hash
-        sha256_hash_tokens = self.tokenizer.encode(sha256_hash)  # Tokenize the hash
-        return torch.tensor(sha256_hash_tokens, dtype=torch.long)
+        try:
+            sha256_hash = hashlib.sha256()
+            with open(file_name, 'rb') as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(chunk)
+
+            hex_hash = sha256_hash.hexdigest()
+            hash_tokens = self.tokenizer.encode(hex_hash)
+
+            # Проверяем валидность токенов хеша
+            hash_tokens = [t if t < self.vocab_size else self.pad_token for t in hash_tokens]
+            return torch.tensor(hash_tokens, dtype=torch.long)
+
+        except Exception as e:
+            print(f"Ошибка вычисления хеша {file_name}: {e}")
+            return torch.tensor([self.pad_token] * 64, dtype=torch.long)  # SHA256 всегда имеет длину 64 символа
 
     def __len__(self):
-        # Return the total number of byte chunks across all files
-        return self.table_init_data['end_byte'].max()
+        return int(self.table_init_data['end_byte'].max() + 1) if not self.table_init_data.empty else 0
 
     def __getitem__(self, index):
-        # Retrieve a dataset item for a given index
-        info = self.get_file_name_by_byte(index)  # Get file info for the index
-        tokens, pads = self.read_file(info[0], info[1])  # Read and tokenize file chunk
-        masked_tokens = self.mask_tokens(tokens)  # Apply random masking
-        hash = self.get_hesh_tokens(info[0])  # Get tokenized file hash
-        extention_tokenize = torch.tensor([get_file_ext_as_token(info[0])], dtype=torch.long)  # Tokenize file extension
-        return tokens, masked_tokens, pads, hash, extention_tokenize  # Return dataset item
+        try:
+            info = self.get_file_name_by_byte(index)
+            if info is None:
+                # Возвращаем пустые данные если файл не найден
+                empty_tokens = torch.full((self.seq_len,), self.pad_token)
+                empty_mask = torch.zeros((1, self.seq_len))
+                empty_hash = torch.tensor([self.pad_token] * 64, dtype=torch.long)
+                empty_ext = torch.tensor([0], dtype=torch.long)
+                return empty_tokens, empty_tokens.clone(), empty_mask, empty_hash, empty_ext
+
+            file_name, start_byte, end_byte = info
+            chunk_index = index - start_byte  # Вычисляем индекс чанка в файле
+
+            tokens, pads = self.read_file(file_name, chunk_index)
+            masked_tokens = self.mask_tokens(tokens)
+            hash = self.get_hesh_tokens(file_name)
+            extention_tokenize = torch.tensor([get_file_ext_as_token(file_name)], dtype=torch.long)
+
+            # Финальная проверка на NaN и бесконечные значения
+            if torch.isnan(tokens).any() or torch.isinf(tokens).any():
+                print(f"Обнаружены NaN/Inf в токенах файла {file_name}")
+                tokens = torch.where(torch.isnan(tokens) | torch.isinf(tokens),
+                                     torch.tensor(self.pad_token), tokens)
+
+            return tokens, masked_tokens, pads, hash, extention_tokenize
+
+        except Exception as e:
+            print(f"Ошибка в __getitem__ для индекса {index}: {e}")
+            # Возвращаем пустые данные в случае ошибки
+            empty_tokens = torch.full((self.seq_len,), self.pad_token)
+            empty_mask = torch.zeros((1, self.seq_len))
+            empty_hash = torch.tensor([self.pad_token] * 64, dtype=torch.long)
+            empty_ext = torch.tensor([0], dtype=torch.long)
+            return empty_tokens, empty_tokens.clone(), empty_mask, empty_hash, empty_ext
