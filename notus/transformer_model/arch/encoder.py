@@ -4,7 +4,7 @@ from notus.transformer_model.arch.attention import SelfAttention, MultiHeadAtten
 from notus.transformer_model.arch.mlp import MLP
 
 class EncoderBlock(nn.Module):
-    def __init__(self, attention_type: str,
+    def __init__(self,
                  dim_ff: int,
                  num_heads: int,
                  embedding_dim: int,
@@ -14,14 +14,7 @@ class EncoderBlock(nn.Module):
         super(EncoderBlock, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        if attention_type == "SelfAttention":
-            self.attention = SelfAttention(embedding_dim, self.head_dim)
-        if attention_type == "MultiHeadAttention":
-            self.attention = MultiHeadAttention(embedding_dim, num_heads)
-        if attention_type == "MultiQueryAttention":
-            self.attention = MultiQueryAttention(embedding_dim, num_heads)
-        else:
-            assert "Unknown attention type, avai: SelfAttention, MultiHeadAttention, MultiQueryAttention"
+        self.attention = MultiHeadAttention(embedding_dim, num_heads)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
         self.norm1 = nn.LayerNorm(embedding_dim)
@@ -47,7 +40,6 @@ class Encoder(nn.Module):
                  d_ff: int,
                  dropout: float,
                  hash_len: int,
-                 attention_type: str,
                  activation_type = 'relu'
                  ):
         super(Encoder, self).__init__()
@@ -60,7 +52,6 @@ class Encoder(nn.Module):
         self.layers = nn.ModuleList(
             [
                 EncoderBlock(
-                    attention_type=attention_type,
                     dim_ff=d_ff,
                     num_heads=num_heads,
                     embedding_dim=embedding_dim,
