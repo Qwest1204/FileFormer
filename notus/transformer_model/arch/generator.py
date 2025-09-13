@@ -1,9 +1,10 @@
 import torch
 import torch.nn as nn
-from notus.transformer_model.arch.attention import SelfAttention, MultiHeadAttention, MultiQueryAttention
+from notus.transformer_model.arch.attention import MultiHeadAttention, MultiQueryAttention
 from notus.transformer_model.arch.mlp import MLP
 import torch.nn.functional as F
 import math
+
 
 class DecoderLayer(nn.Module):
     def __init__(self,
@@ -17,7 +18,7 @@ class DecoderLayer(nn.Module):
         # define attention
         self.head_dim = embedding_dim // num_heads
         self.self_attention = MultiQueryAttention(embedding_dim, num_heads)
-        self.cross_attention = MultiQueryAttention(embedding_dim, num_heads)
+        self.cross_attention = MultiHeadAttention(embedding_dim, num_heads)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
         #define normalization
@@ -54,8 +55,9 @@ class Decoder(nn.Module):
                  d_ff: int,
                  dropout: float,
                  chunk_size: int,
-                 activation_type = 'relu'
+                 activation_type: str = 'relu',
                  ):
+
         super(Decoder, self).__init__()
         self.emb_size = embedding_dim
         self.device = device

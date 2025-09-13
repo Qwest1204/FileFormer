@@ -30,7 +30,7 @@ class FileFormer(L.LightningModule):
         self.decoder = decoder
         self.loss_fn = loss_fn
         self.config = config
-        self.automatic_optimization = False  # Для ручного управления оптимизацией
+        self.automatic_optimization = True  # Для ручного управления оптимизацией
 
     def training_step(self, batch, batch_idx):
         tokens, masked_tokens, pads, hash, extention_tokenize = batch
@@ -75,7 +75,7 @@ class FileFormer(L.LightningModule):
         }
 
 fileformer = FileFormer(encoder, decoder, loss_fn, configs)
-trainer = L.Trainer(max_epochs=10, precision="16-mixed")
+trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'],)
 trainer.fit(model=fileformer, train_dataloaders=dataloader)
 
 

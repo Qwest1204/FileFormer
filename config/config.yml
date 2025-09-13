@@ -1,20 +1,19 @@
 encoder:
   vocab_size: 258
   embedding_dim: 256
-  num_heads: 8
-  num_layers: 6
-  hash_len: 32
-  d_ff: 700
-  dropout: 0.05
+  num_heads: 2
+  num_layers: 1
+  hash_len: 64
+  d_ff: 100
+  dropout: 0.1
   file_type_vocab: 213
   device: "mps"
-  attention_type: "MultiQueryAttention"
 decoder:
   vocab_size: 258
   embedding_dim: 256
-  num_heads: 8
-  num_layers: 6
-  d_ff: 700
+  num_heads: 16
+  num_layers: 8
+  d_ff: 200
   dropout: 0.05
   chunk_size: 2048
   device: "mps"
@@ -25,6 +24,7 @@ train:
   num_epoch: 50
   lr: 0.01
   device: "mps"
+  precision: 32
   batch_size: 2
   num_workers: 0
 
