@@ -54,7 +54,7 @@ class FileFormer(L.LightningModule):
 
     def configure_optimizers(self):
         optimizer = optim.AdamW(
-            self.parameters(),
+            params=[*self.encoder.parameters(), *self.decoder.parameters()],
             lr=self.config['train']['lr'],
         )
 
