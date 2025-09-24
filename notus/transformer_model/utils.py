@@ -8,13 +8,8 @@ def load_config(conf_path: str) -> dict:
     f.close()
     return data
 
-def save_model(model, optimizer, config: dict, model_name: str) -> None:
-    try:
-        torch.save({"model":model.state_dict(),
-                        "optimizer":optimizer.state_dict(),
-                        "config": config}, model_name)
-        print("successfully saved model")
-    except Exception as e:
-        print(e)
+def load_model(base_model, weights, device):
+    base_model.load_state_dict(torch.load(weights, map_location=device))
+    return base_model
 
 
