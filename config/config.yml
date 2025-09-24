@@ -18,6 +18,7 @@ decoder:
   chunk_size: 2048
   device: "mps"
 dataset:
+  vocab_size: 258
   seq_len: 2048
   path: "/Users/daniilogorodnikov/dataset/test"
 train:
