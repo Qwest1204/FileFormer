@@ -19,6 +19,7 @@ class FileDataset(Dataset):
         self.pad_token = self.tokenizer.encode("<pad>")[0]
         self.mask_token = self.tokenizer.encode("<mask>")[0]
         self.table_init_data = pd.DataFrame(columns=["id", "file_name", "start_byte", "end_byte"])
+        self.prepare()
 
     def prepare(self):
         byte_len = 0
