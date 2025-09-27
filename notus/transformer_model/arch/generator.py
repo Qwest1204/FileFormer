@@ -17,7 +17,7 @@ class DecoderLayer(nn.Module):
         super(DecoderLayer, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        self.self_attention = MultiQueryAttention(embedding_dim, num_heads)
+        self.self_attention = MultiHeadAttention(embedding_dim, num_heads)
         self.cross_attention = MultiHeadAttention(embedding_dim, num_heads)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
