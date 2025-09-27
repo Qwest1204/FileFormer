@@ -1,16 +1,18 @@
-from notus import Encoder, Decoder, utils, FileDataset, Muon
+from notus import Encoder, Decoder, utils, FileDataset, Muon, ByteLevelTokenizer
 import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
 from tqdm import tqdm
 import lightning as L
 
+#tokenizer
+tokenizer = ByteLevelTokenizer()
+
 #configs
 configs = utils.load_config("/Users/daniilogorodnikov/PycharmProjects/Notus/config/config.yml")
 
 #dataset
 dataset = FileDataset(**configs['dataset'])
-dataset.prepare()
 dataset_len = len(dataset)
 dataloader = DataLoader(dataset, batch_size=configs['train']['batch_size'],
                         shuffle=True, num_workers=configs['train']['num_workers']
@@ -24,12 +26,13 @@ decoder = Decoder(**configs['decoder'])
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
 
 class FileFormer(L.LightningModule):
-    def __init__(self, encoder, decoder, loss_fn, config):
+    def __init__(self, encoder, decoder, loss_fn, config, test_loader):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
         self.loss_fn = loss_fn
         self.config = config
+        self.test_loader = test_loader
         self.automatic_optimization = True  # Для ручного управления оптимизацией
 
     def training_step(self, batch, batch_idx):
@@ -49,6 +52,24 @@ class FileFormer(L.LightningModule):
         opt.zero_grad()
 
         opt.step()
+
+        if batch_idx % 500 == 0:
+            with torch.no_grad():
+                batch = next(iter(self.test_loader))
+                tokens, masked_tokens, pads, hash, extention_tokenize = batch
+
+                encoder_out = self.encoder(hash, extention_tokenize)
+                decoder_out = self.decoder(masked_tokens, encoder_out, pads)
+
+                print(f"origin tokens : {tokenizer.decode(tokens[:40])}")
+
+                out = torch.argmax(decoder_out, dim=2).tolist()
+
+                print(f"origin tokens : {tokenizer.decode(out[:40])}")
+
+                if configs['train']['temproary_save'] == True:
+                    torch.save(self.encoder.state_dict(), "tmp-encoder.pt")
+                    torch.save(self.encoder.state_dict(), "tmp-encoder.pt")
 
         return loss
 
@@ -77,7 +98,4 @@ class FileFormer(L.LightningModule):
 fileformer = FileFormer(encoder, decoder, loss_fn, configs)
 trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'],)
 trainer.fit(model=fileformer, train_dataloaders=dataloader)
-
-
-
 
