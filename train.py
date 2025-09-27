@@ -13,7 +13,8 @@ configs = utils.load_config("/Users/daniilogorodnikov/PycharmProjects/Notus/conf
 
 #dataset
 dataset = FileDataset(**configs['dataset'])
-test_dataset = FileDataset(**configs['dataset'], path=configs['train']['test_file'])
+test_dataset = FileDataset(vocab_size=configs['dataset']['vocab_size'], seq_len=configs['dataset']['seq_len'],
+                           path=configs['train']['test_file'])
 
 dataloader = DataLoader(dataset, batch_size=configs['train']['batch_size'],
                         shuffle=True, num_workers=configs['train']['num_workers']
