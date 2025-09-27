@@ -11,5 +11,3 @@ def load_config(conf_path: str) -> dict:
 def load_model(base_model, weights, device):
     base_model.load_state_dict(torch.load(weights, map_location=device))
     return base_model
-
-
