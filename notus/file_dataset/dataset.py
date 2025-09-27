@@ -63,7 +63,7 @@ class FileDataset(Dataset):
                 # Конвертируем байты в hex строку для токенизации
                 hex_data = data.hex()
                 tokens = self.tokenizer.encode(hex_data)
-
+                #print(tokens)
                 # Обрезаем или дополняем до seq_len
                 if len(tokens) > self.seq_len:
                     tokens = tokens[:self.seq_len]
@@ -76,7 +76,7 @@ class FileDataset(Dataset):
                     tokens.extend([self.pad_token] * (self.seq_len - len(tokens)))
 
                 # Проверяем валидность токенов
-                tokens = [t if t < self.vocab_size else self.pad_token for t in tokens]
+                #tokens = [t if t < self.vocab_size else self.pad_token for t in tokens]
                 return torch.tensor(tokens, dtype=torch.long), padding_mask
 
         except Exception as e:
@@ -142,11 +142,11 @@ class FileDataset(Dataset):
             hash = self.get_hesh_tokens(file_name)
             extention_tokenize = torch.tensor([get_file_ext_as_token(file_name)], dtype=torch.long)
 
-            # Финальная проверка на NaN и бесконечные значения
+            #Финальная проверка на NaN и бесконечные значения
             if torch.isnan(tokens).any() or torch.isinf(tokens).any():
-                print(f"Обнаружены NaN/Inf в токенах файла {file_name}")
-                tokens = torch.where(torch.isnan(tokens) | torch.isinf(tokens),
-                                     torch.tensor(self.pad_token), tokens)
+               print(f"Обнаружены NaN/Inf в токенах файла {file_name}")
+               tokens = torch.where(torch.isnan(tokens) | torch.isinf(tokens),
+                                    torch.tensor(self.pad_token), tokens)
 
             return tokens, masked_tokens, pads, hash, extention_tokenize
 
