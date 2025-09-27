@@ -94,7 +94,7 @@ class FileFormer(L.LightningModule):
             }
         }
 
-fileformer = FileFormer(encoder, decoder, loss_fn, configs, test_dataloader)
+fileformer = FileFormer(encoder, decoder, loss_fn, configs)
 trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'],)
 trainer.fit(model=fileformer, train_dataloaders=dataloader)
 
