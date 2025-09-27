@@ -13,10 +13,13 @@ configs = utils.load_config("/Users/daniilogorodnikov/PycharmProjects/Notus/conf
 
 #dataset
 dataset = FileDataset(**configs['dataset'])
-dataset_len = len(dataset)
+test_dataset = FileDataset(**configs['test_dataset'], path=configs['train']['test_file'])
+
 dataloader = DataLoader(dataset, batch_size=configs['train']['batch_size'],
                         shuffle=True, num_workers=configs['train']['num_workers']
                         )
+
+test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
 #models
 encoder = Encoder(**configs['encoder'])
@@ -95,7 +98,7 @@ class FileFormer(L.LightningModule):
             }
         }
 
-fileformer = FileFormer(encoder, decoder, loss_fn, configs)
+fileformer = FileFormer(encoder, decoder, loss_fn, configs, test_dataloader)
 trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'],)
 trainer.fit(model=fileformer, train_dataloaders=dataloader)
 
