@@ -33,7 +33,6 @@ class FileFormer(L.LightningModule):
         self.decoder = decoder
         self.loss_fn = loss_fn
         self.config = config
-        self.test_loader = test_loader
         self.automatic_optimization = True  # Для ручного управления оптимизацией
 
     def training_step(self, batch, batch_idx):
