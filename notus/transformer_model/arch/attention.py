@@ -159,9 +159,10 @@ class MultiHeadLinearAttention(nn.Module):
 
         if mask is not None:
             pad_mask = mask.repeat_interleave(self.num_heads, dim=0).unsqueeze(-1)
+            pad_mask = pad_mask.unsqueeze(-1).bool()
             phi_k = phi_k.masked_fill(pad_mask, 0.0)
 
-        S = torch.einsum('bnd,bne->bde', phi_k, v)
+        S = torch.einsum('...nd,...ne->...de', phi_k, v)
 
         # Z = phi_k^T @ ones  (B*H, d_h)
         Z = phi_k.sum(dim=1)  # sum over seq_len (B*H, d_h)
