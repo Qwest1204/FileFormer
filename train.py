@@ -30,6 +30,7 @@ loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
 
 class FileFormer(L.LightningModule):
     def __init__(self, encoder, decoder, loss_fn, config, test_loader):
+        #comment
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
