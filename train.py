@@ -59,7 +59,7 @@ class FileFormer(L.LightningModule):
                 encoder_out = self.encoder(hash, extention_tokenize)
                 decoder_out = self.decoder(masked_tokens, encoder_out, pads)
 
-                print(f"origin tokens : {tokenizer.decode(tokens[:40])}")
+                print(f"origin tokens : {tokenizer.decode(tokens.tolist()[:40])}")
 
                 out = torch.argmax(decoder_out, dim=2).tolist()
 
