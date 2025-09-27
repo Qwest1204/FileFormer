@@ -13,14 +13,10 @@ configs = utils.load_config("/Users/daniilogorodnikov/PycharmProjects/Notus/conf
 
 #dataset
 dataset = FileDataset(**configs['dataset'])
-test_dataset = FileDataset(vocab_size=configs['dataset']['vocab_size'], seq_len=configs['dataset']['seq_len'],
-                           path=configs['train']['test_file'])
 
 dataloader = DataLoader(dataset, batch_size=configs['train']['batch_size'],
                         shuffle=True, num_workers=configs['train']['num_workers']
                         )
-
-test_dataloader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
 #models
 encoder = Encoder(**configs['encoder'])
@@ -60,8 +56,6 @@ class FileFormer(L.LightningModule):
 
         if batch_idx % 500 == 0:
             with torch.no_grad():
-                batch = next(iter(self.test_loader))
-                tokens, masked_tokens, pads, hash, extention_tokenize = batch
 
                 encoder_out = self.encoder(hash, extention_tokenize)
                 decoder_out = self.decoder(masked_tokens, encoder_out, pads)

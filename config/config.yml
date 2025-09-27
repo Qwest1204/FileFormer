@@ -28,6 +28,5 @@ train:
   precision: 32
   batch_size: 2
   num_workers: 0
-  test_file: "path"
   temproary_save: True
 
