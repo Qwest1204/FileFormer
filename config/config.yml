@@ -7,7 +7,7 @@ encoder:
   d_ff: 100
   dropout: 0.1
   file_type_vocab: 213
-  device: "mps"
+  device: "cpu"
 decoder:
   vocab_size: 258
   embedding_dim: 256
@@ -16,7 +16,7 @@ decoder:
   d_ff: 200
   dropout: 0.05
   chunk_size: 2048
-  device: "mps"
+  device: "cpu"
 dataset:
   vocab_size: 258
   seq_len: 2048
@@ -24,8 +24,10 @@ dataset:
 train:
   num_epoch: 50
   lr: 0.01
-  device: "mps"
+  device: "cpu"
   precision: 32
   batch_size: 2
   num_workers: 0
+  test_file: "path"
+  temproary_save: True
 
