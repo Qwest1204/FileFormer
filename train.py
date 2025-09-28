@@ -53,7 +53,7 @@ class FileFormer(L.LightningModule):
 
         opt.step()
 
-        if batch_idx % 500 == 0:
+        if batch_idx % configs['train']['interval4save'] == 0:
             eval.evaluate(self.encoder, self.decoder, tokenizer, batch)
             if configs['train']['temproary_save'] == True:
                 torch.save(self.encoder.state_dict(), "tmp-encoder.pt")

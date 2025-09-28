@@ -23,6 +23,7 @@ dataset:
   path: "/Users/daniilogorodnikov/dataset/test"
 train:
   num_epoch: 50
+  interval4save: 500
   lr: 0.01
   device: "cpu"
   precision: 32
