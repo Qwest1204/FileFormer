@@ -6,8 +6,10 @@ __all__ = [
            'mlp',
            'utils',
            'Decoder',
-            'file_tokenizer_utils',
-            'Muon'
+           'file_tokenizer_utils',
+           'Muon',
+            'eval'
+
            ]
 
 from notus.file_dataset import FileDataset
@@ -21,3 +23,4 @@ import notus.transformer_model.arch.mlp as mlp
 import notus.transformer_model.utils as utils
 from notus.tokenizer import utils as file_tokenizer_utils
 from notus.transformer_model.arch.muon import Muon
+from notus import eval

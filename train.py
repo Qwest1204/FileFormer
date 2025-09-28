@@ -1,4 +1,4 @@
-from notus import Encoder, Decoder, utils, FileDataset, Muon, ByteLevelTokenizer
+from notus import Encoder, Decoder, utils, FileDataset, Muon, ByteLevelTokenizer, eval
 import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
@@ -54,20 +54,10 @@ class FileFormer(L.LightningModule):
         opt.step()
 
         if batch_idx % 500 == 0:
-            with torch.no_grad():
-
-                encoder_out = self.encoder(hash, extention_tokenize)
-                decoder_out = self.decoder(masked_tokens, encoder_out, pads)
-
-                print(f"origin tokens : {tokenizer.decode(tokens.tolist()[:40])}")
-
-                out = torch.argmax(decoder_out, dim=2).tolist()
-
-                print(f"origin tokens : {tokenizer.decode(out[:40])}")
-
-                if configs['train']['temproary_save'] == True:
-                    torch.save(self.encoder.state_dict(), "tmp-encoder.pt")
-                    torch.save(self.encoder.state_dict(), "tmp-encoder.pt")
+            eval.evaluate(self.encoder, self.decoder, tokenizer, batch)
+            if configs['train']['temproary_save'] == True:
+                torch.save(self.encoder.state_dict(), "tmp-encoder.pt")
+                torch.save(self.encoder.state_dict(), "tmp-encoder.pt")
 
         return loss
 
