@@ -1,25 +1,25 @@
 encoder:
   vocab_size: 258
-  embedding_dim: 256
-  num_heads: 2
-  num_layers: 1
+  embedding_dim: 2048
+  num_heads: 8
+  num_layers: 8
   hash_len: 64
-  d_ff: 100
+  d_ff: 2048
   dropout: 0.1
   file_type_vocab: 213
   device: "cpu"
 decoder:
   vocab_size: 258
-  embedding_dim: 256
+  embedding_dim: 2048
   num_heads: 16
-  num_layers: 8
-  d_ff: 200
-  dropout: 0.05
-  chunk_size: 2048
+  num_layers: 16
+  d_ff: 2048
+  dropout: 0.1
+  chunk_size: 3072
   device: "cpu"
 dataset:
   vocab_size: 258
-  seq_len: 2048
+  seq_len: 3072
   path: "/Users/daniilogorodnikov/dataset/test"
 train:
   num_epoch: 50
@@ -29,5 +29,4 @@ train:
   precision: 32
   batch_size: 2
   num_workers: 0
-  temproary_save: True
 

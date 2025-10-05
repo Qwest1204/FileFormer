@@ -162,7 +162,7 @@ class MultiHeadLinearAttention(nn.Module):
             pad_mask = pad_mask.unsqueeze(-1).bool()
             phi_k = phi_k.masked_fill(pad_mask, 0.0)
 
-        S = torch.einsum('...nd,...ne->...de', phi_k, v)
+
 
         # Z = phi_k^T @ ones  (B*H, d_h)
         Z = phi_k.sum(dim=1)  # sum over seq_len (B*H, d_h)

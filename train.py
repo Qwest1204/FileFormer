@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 from tqdm import tqdm
 import lightning as L
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 #tokenizer
 tokenizer = ByteLevelTokenizer()
@@ -24,6 +25,15 @@ decoder = Decoder(**configs['decoder'])
 
 #loss
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
+
+checkpoint_callback = ModelCheckpoint(
+    dirpath="checkpoints/",  # Папка для сохранения чекпоинтов
+    filename="model-{epoch:02d}-{step:05d}",  # Шаблон имени файла
+    every_n_train_steps=configs['train']['interval4save'],  # Сохранять каждые 1000 шагов
+    save_top_k=-1,  # Сохранять все чекпоинты (не ограничивать количество)
+    save_weights_only=False,  # Сохранять полное состояние (модель, оптимизатор и т.д.)
+    verbose=True  # Выводить информацию о сохранении
+)
 
 class FileFormer(L.LightningModule):
     def __init__(self, encoder, decoder, loss_fn, config):
@@ -55,35 +65,19 @@ class FileFormer(L.LightningModule):
 
         if batch_idx % configs['train']['interval4save'] == 0:
             eval.evaluate(self.encoder, self.decoder, tokenizer, batch)
-            if configs['train']['temproary_save'] == True:
-                torch.save(self.encoder.state_dict(), "tmp-encoder.pt")
-                torch.save(self.encoder.state_dict(), "tmp-encoder.pt")
-
         return loss
 
     def configure_optimizers(self):
         optimizer = optim.AdamW(
-            params=[*self.encoder.parameters(), *self.decoder.parameters()],
+            params=self.parameters(),
             lr=self.config['train']['lr'],
-        )
-
-        # Добавляем планировщик обучения
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer,
-            mode='min',
-            factor=0.1,
-            patience=5,
         )
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "train_loss"
-            }
         }
 
 fileformer = FileFormer(encoder, decoder, loss_fn, configs)
-trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'],)
+trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'], callbacks=[checkpoint_callback])
 trainer.fit(model=fileformer, train_dataloaders=dataloader)
 
