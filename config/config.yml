@@ -6,7 +6,7 @@ encoder:
   hash_len: 64
   d_ff: 64
   dropout: 0.1
-  file_type_vocab: 213
+  file_type_vocab: 935
   device: "mps"
 decoder:
   vocab_size: 258
