@@ -33,12 +33,13 @@ class SelfAttention(nn.Module):
         return self.out_fc(output)
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, emb_size, num_heads,):
+    def __init__(self, emb_size, num_heads):
         super(MultiHeadAttention, self).__init__()
-        assert emb_size % num_heads == 0, "Emb_size must be divisible by num_heads"
+        assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
 
         self.num_heads = num_heads
         self.head_dim = emb_size // num_heads
+        self.emb_size = emb_size
 
         self.Q_layer = nn.Linear(emb_size, emb_size)
         self.K_layer = nn.Linear(emb_size, emb_size)
@@ -48,21 +49,25 @@ class MultiHeadAttention(nn.Module):
         self.scale_param = self.head_dim ** -0.5
 
     def forward(self, q, k, v, mask=None):
-        bs, seqlen_q, dim = q.shape  # Извлекаем seqlen из q для Q
+        bs, seqlen_q, dim = q.shape  # Extract seqlen from q for Q
         _, seqlen_kv, _ = k.shape
 
-        Q = self.Q_layer(q)
-        K = self.K_layer(k)
-        V = self.V_layer(v)
+        Q = self.Q_layer(q)  # (bs, seqlen_q, dim)
+        K = self.K_layer(k)  # (bs, seqlen_kv, dim)
+        V = self.V_layer(v)  # (bs, seqlen_kv, dim)
 
-        #Reshape Q, K, V to (N, num_heads, seq_len, head_dim)
-        Q = Q.view(bs, seqlen_q, self.num_heads, self.head_dim).transpose(1, 2)
-        K = K.view(bs, seqlen_kv, self.num_heads, self.head_dim).transpose(1, 2)
-        V = V.view(bs, seqlen_kv, self.num_heads, self.head_dim).transpose(1, 2)
+        # Reshape Q, K, V to (bs, num_heads, seq_len, head_dim)
+        Q = Q.view(bs, seqlen_q, self.num_heads, self.head_dim).transpose(1, 2)  # (bs, num_heads, seqlen_q, head_dim)
+        K = K.view(bs, seqlen_kv, self.num_heads, self.head_dim).transpose(1, 2)  # (bs, num_heads, seqlen_kv, head_dim)
+        V = V.view(bs, seqlen_kv, self.num_heads, self.head_dim).transpose(1, 2)  # (bs, num_heads, seqlen_kv, head_dim)
 
-        attention_scores = torch.matmul(Q, K.transpose(-1, -2)) * self.scale_param #[bs, seq_len, seq_len]
+        attention_scores = torch.matmul(Q,
+                                        K.transpose(-1, -2)) * self.scale_param  # (bs, num_heads, seqlen_q, seqlen_kv)
 
         if mask is not None:
+            # Ensure mask is compatible with attention_scores
+            if mask.dim() == 3:  # Assume mask is (bs, seqlen_q, seqlen_kv)
+                mask = mask.unsqueeze(1).repeat(1, self.num_heads, 1, 1)  # (bs, num_heads, seqlen_q, seqlen_kv)
             attention_scores = attention_scores.masked_fill(mask == 0, float('-inf'))
 
         attention_weights = F.softmax(attention_scores, dim=-1)

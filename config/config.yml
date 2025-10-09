@@ -1,32 +1,32 @@
 encoder:
   vocab_size: 258
-  embedding_dim: 2048
-  num_heads: 8
-  num_layers: 8
+  embedding_dim: 128
+  num_heads: 2
+  num_layers: 1
   hash_len: 64
-  d_ff: 2048
+  d_ff: 64
   dropout: 0.1
   file_type_vocab: 213
-  device: "cpu"
+  device: "mps"
 decoder:
   vocab_size: 258
-  embedding_dim: 2048
-  num_heads: 16
-  num_layers: 16
-  d_ff: 2048
+  embedding_dim: 128
+  num_heads: 2
+  num_layers: 1
+  d_ff: 64
   dropout: 0.1
-  chunk_size: 3072
-  device: "cpu"
+  chunk_size: 256
+  device: "mps"
 dataset:
   vocab_size: 258
-  seq_len: 3072
+  seq_len: 256
   path: "/Users/daniilogorodnikov/dataset/test"
 train:
   num_epoch: 50
-  interval4save: 500
+  interval4save: 200
   lr: 0.01
-  device: "cpu"
+  device: "mps"
   precision: 32
-  batch_size: 2
+  batch_size: 4
   num_workers: 0
 

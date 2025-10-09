@@ -4,7 +4,7 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 from tqdm import tqdm
 import lightning as L
-from pytorch_lightning.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint
 
 #tokenizer
 tokenizer = ByteLevelTokenizer()
@@ -30,7 +30,7 @@ checkpoint_callback = ModelCheckpoint(
     dirpath="checkpoints/",  # Папка для сохранения чекпоинтов
     filename="model-{epoch:02d}-{step:05d}",  # Шаблон имени файла
     every_n_train_steps=configs['train']['interval4save'],  # Сохранять каждые 1000 шагов
-    save_top_k=-1,  # Сохранять все чекпоинты (не ограничивать количество)
+    save_top_k=5,  # Сохранять все чекпоинты (не ограничивать количество)
     save_weights_only=False,  # Сохранять полное состояние (модель, оптимизатор и т.д.)
     verbose=True  # Выводить информацию о сохранении
 )
