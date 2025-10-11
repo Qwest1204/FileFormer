@@ -1,13 +1,40 @@
 import torch
 
-def evaluate(encoder, decoder, tokenizer, x):
+def evaluate(encoder, decoder, tokenizer, x, dataset):
     tokens, masked_tokens, pads, hash, extention_tokenize = x
     with torch.no_grad():
         encoder_out = encoder(hash, extention_tokenize)
         decoder_out = decoder(masked_tokens, encoder_out, pads)
 
+        # Получаем предсказанные токены
+        predicted_tokens = torch.argmax(decoder_out, dim=2)  # (bs, seq_len)
+
+        # Вывод первых 40 токенов для первого элемента батча
         print(f"origin tokens : {tokenizer.decode(tokens[0].detach().cpu().tolist()[:40])}")
+        print(f"gen tokens : {tokenizer.decode(predicted_tokens[0].detach().cpu().tolist()[:40])}")
 
-        out = torch.argmax(decoder_out, dim=2)[0].detach().cpu().tolist()
+        # Вычисление точности для маскированных токенов
+        mask_positions = masked_tokens == dataset.mask_token  # (bs, seq_len)
+        if mask_positions.any():
+            masked_predictions = predicted_tokens[mask_positions]  # Предсказания для <mask>
+            masked_targets = tokens[mask_positions]  # Истинные токены для <mask>
+            masked_correct = (masked_predictions == masked_targets).float().sum()
+            masked_accuracy = (masked_correct / mask_positions.sum()).item() * 100
+        else:
+            masked_accuracy = 0.0  # Если нет маскированных токенов
+            print("No masked tokens found in the batch.")
 
-        print(f"gen tokens : {tokenizer.decode(out[:40])}")
+        # Вычисление точности для всех токенов (исключая <pad>)
+        non_pad_positions = tokens != dataset.pad_token  # (bs, seq_len)
+        if non_pad_positions.any():
+            non_pad_predictions = predicted_tokens[non_pad_positions]
+            non_pad_targets = tokens[non_pad_positions]
+            total_correct = (non_pad_predictions == non_pad_targets).float().sum()
+            total_accuracy = (total_correct / non_pad_positions.sum()).item() * 100
+        else:
+            total_accuracy = 0.0  # Если все токены — паддинг
+            print("No non-pad tokens found in the batch.")
+
+        # Вывод точности
+        print(f"Masked tokens accuracy: {masked_accuracy:.2f}%")
+        print(f"Total tokens accuracy (excluding padding): {total_accuracy:.2f}%")
