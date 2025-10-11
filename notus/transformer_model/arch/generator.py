@@ -59,13 +59,11 @@ class Decoder(nn.Module):
                  chunk_size: int,
                  activation_type: str = 'relu',
                  ):
-
         super(Decoder, self).__init__()
         self.emb_size = embedding_dim
         self.device = device
         self.chunk_emb = nn.Embedding(vocab_size, embedding_dim)
         self.pe = RotaryPositionalEmbeddings(embedding_dim)
-
         self.layers = nn.ModuleList(
             [
                 DecoderLayer(
@@ -74,25 +72,22 @@ class Decoder(nn.Module):
                     embedding_dim=embedding_dim,
                     dropout=dropout,
                     activation_type=activation_type,
-
+                    latent_dim=embedding_dim // num_heads
                 )
                 for _ in range(num_layers)
-
             ]
         )
         self.dropout = nn.Dropout(dropout)
         self.final_linear = nn.Linear(embedding_dim, vocab_size)
 
-
     def forward(self, x, context, padding_mask=None):
         # x: (bs, seq_len)
         #context: (bs, seq_len, emb_dim)
-        N, seqlen, = x.shape
-
+        N, seqlen = x.shape
         out = self.chunk_emb(x)
         pos = torch.arange(0, seqlen).expand(N, seqlen).to(self.device)
         out = self.dropout(
-            (out + self.pe(pos))
+            (out + self.pe(out))
         )
         for layer in self.layers:
             out = layer(out, context, padding_mask=padding_mask)
