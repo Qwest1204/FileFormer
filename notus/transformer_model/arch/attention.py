@@ -33,7 +33,7 @@ class SelfAttention(nn.Module):
         return self.out_fc(output)
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, emb_size, num_heads):
+    def __init__(self, emb_size, num_heads, latent_dim):
         super(MultiHeadAttention, self).__init__()
         assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
 
@@ -76,7 +76,7 @@ class MultiHeadAttention(nn.Module):
         return self.fc_out(output)
 
 class MultiQueryAttention(nn.Module):
-    def __init__(self, emb_size: int, num_heads: int):
+    def __init__(self, emb_size: int, num_heads: int, latent_dim):
         super(MultiQueryAttention, self).__init__()
         assert emb_size % num_heads == 0, "Emb_size must be divisible by num_heads"
 
@@ -113,7 +113,7 @@ class MultiQueryAttention(nn.Module):
         return self.fc_out(output)
 
 class MultiHeadLinearAttention(nn.Module):
-    def __init__(self, emb_size: int, num_heads: int):
+    def __init__(self, emb_size: int, num_heads: int, latent_dim):
         super(MultiHeadLinearAttention, self).__init__()
         assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
 
@@ -183,5 +183,60 @@ class MultiHeadLinearAttention(nn.Module):
         attn_output = self._reshape_from_heads(attn_output)
 
         attn_output = self.fc_out(attn_output)
+
+        return attn_output
+
+class MultiHeadLatentAttention(nn.Module):
+    def __init__(self, emb_size: int, num_heads: int, latent_dim: int):
+        super(MultiHeadLatentAttention, self).__init__()
+        assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
+
+        self.num_heads = num_heads
+        self.head_dim = emb_size // num_heads
+        self.latent_dim = latent_dim  # Размерность латентного пространства
+
+        # Проекции в латентное пространство
+        self.Q_to_latent = nn.Linear(emb_size, num_heads * latent_dim)
+        self.K_to_latent = nn.Linear(emb_size, num_heads * latent_dim)
+        self.V_to_latent = nn.Linear(emb_size, num_heads * latent_dim)
+
+        # Выходной слой
+        self.fc_out = nn.Linear(num_heads * latent_dim, emb_size)
+        self.scale_param = self.latent_dim ** -0.5
+
+    def _reshape_to_heads(self, x):
+        batch_size, seq_len, _ = x.shape
+        x = x.view(batch_size, seq_len, self.num_heads, self.latent_dim)
+        x = x.permute(0, 2, 1, 3).contiguous()  # (B, H, N, latent_dim)
+        return x.view(batch_size * self.num_heads, seq_len, self.latent_dim)
+
+    def _reshape_from_heads(self, x):
+        batch_size = x.shape[0] // self.num_heads
+        x = x.view(batch_size, self.num_heads, -1, self.latent_dim)
+        x = x.permute(0, 2, 1, 3).contiguous()  # (B, N, H, latent_dim)
+        return x.view(batch_size, -1, self.num_heads * self.latent_dim)
+
+    def forward(self, query, key, value, mask=None):
+        bs, seqlen, dim = query.shape
+
+        q = self.Q_to_latent(query)  # (bs, seqlen, num_heads * latent_dim)
+        k = self.K_to_latent(key)
+        v = self.V_to_latent(value)
+
+        q = self._reshape_to_heads(q)  # (bs*num_heads, seqlen, latent_dim)
+        k = self._reshape_to_heads(k)
+        v = self._reshape_to_heads(v)
+
+        attention_scores = torch.einsum('bnd,bmd->bnm', q, k) * self.scale_param  # (bs*num_heads, seqlen, seqlen)
+
+        if mask is not None:
+            pad_mask = mask.repeat_interleave(self.num_heads, dim=0)
+            attention_scores = attention_scores.masked_fill(pad_mask == 0, float('-inf'))
+
+        attention_weights = F.softmax(attention_scores, dim=-1)
+        attn_output = torch.einsum('bnm,bmd->bnd', attention_weights, v)  # (bs*num_heads, seqlen, latent_dim)
+
+        attn_output = self._reshape_from_heads(attn_output)  # (bs, seqlen, num_heads * latent_dim)
+        attn_output = self.fc_out(attn_output)  # (bs, seqlen, emb_size)
 
         return attn_output

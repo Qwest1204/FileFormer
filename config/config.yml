@@ -13,6 +13,7 @@ decoder:
   embedding_dim: 128
   num_heads: 2
   num_layers: 1
+  latent_dim: 256
   d_ff: 64
   dropout: 0.1
   chunk_size: 256
