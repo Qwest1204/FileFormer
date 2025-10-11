@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from notus.transformer_model.arch.attention import MultiHeadAttention, MultiQueryAttention
+from notus.transformer_model.arch.pe import RotaryPositionalEmbeddings
 from notus.transformer_model.arch.mlp import MLP
 import torch.nn.functional as F
 import math
@@ -63,7 +64,7 @@ class Decoder(nn.Module):
         self.emb_size = embedding_dim
         self.device = device
         self.chunk_emb = nn.Embedding(vocab_size, embedding_dim)
-        self.pe = nn.Embedding(chunk_size, embedding_dim)
+        self.pe = RotaryPositionalEmbeddings(embedding_dim)
 
         self.layers = nn.ModuleList(
             [
