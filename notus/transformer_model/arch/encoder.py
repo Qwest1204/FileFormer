@@ -14,7 +14,7 @@ class EncoderBlock(nn.Module):
         super(EncoderBlock, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        self.attention = MultiHeadAttention(embedding_dim, num_heads)
+        self.attention = MultiHeadAttention(embedding_dim, num_heads, 0)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
         self.norm1 = nn.LayerNorm(embedding_dim)

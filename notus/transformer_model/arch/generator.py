@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from notus.transformer_model.arch.attention import MultiHeadAttention, MultiQueryAttention
+from notus.transformer_model.arch.attention import MultiHeadAttention, MultiHeadLatentAttention
 from notus.transformer_model.arch.pe import RotaryPositionalEmbeddings
 from notus.transformer_model.arch.mlp import MLP
 import torch.nn.functional as F
@@ -19,7 +19,7 @@ class DecoderLayer(nn.Module):
         super(DecoderLayer, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        self.self_attention = MultiHeadAttention(embedding_dim, num_heads, latent_dim)
+        self.self_attention = MultiHeadLatentAttention(embedding_dim, num_heads, latent_dim)
         self.cross_attention = MultiHeadAttention(embedding_dim, num_heads, latent_dim)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
@@ -57,6 +57,7 @@ class Decoder(nn.Module):
                  d_ff: int,
                  dropout: float,
                  chunk_size: int,
+                 latent_dim: int,
                  activation_type: str = 'relu',
                  ):
         super(Decoder, self).__init__()
@@ -72,7 +73,7 @@ class Decoder(nn.Module):
                     embedding_dim=embedding_dim,
                     dropout=dropout,
                     activation_type=activation_type,
-                    latent_dim=embedding_dim // num_heads
+                    latent_dim=latent_dim
                 )
                 for _ in range(num_layers)
             ]
