@@ -1,15 +1,15 @@
 import torch
+from notus import ByteLevelTokenizer
 
-def evaluate(encoder, decoder, tokenizer, x):
+def evaluate(forward, x):
     tokens, masked_tokens, pads, hash, extention_tokenize = x
+    tokenizer = ByteLevelTokenizer()
     # Получаем mask_token и pad_token через tokenizer
     mask_token = tokenizer.encode("<mask>")[0]
     pad_token = tokenizer.encode("<pad>")[0]
 
     with torch.no_grad():
-        encoder_out = encoder(hash, extention_tokenize)
-        decoder_out = decoder(masked_tokens, encoder_out, pads)
-
+        decoder_out = forward(masked_tokens, hash, extention_tokenize, pads)
         # Получаем предсказанные токены
         predicted_tokens = torch.argmax(decoder_out, dim=2)  # (bs, seq_len)
 

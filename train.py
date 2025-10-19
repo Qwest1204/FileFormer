@@ -1,8 +1,7 @@
-from notus import Encoder, Decoder, utils, FileDataset, Muon, ByteLevelTokenizer, eval
+from notus import Encoder, Decoder, utils, FileDataset, Muon, ByteLevelTokenizer, FileFormer
 import torch
 from torch.utils.data import DataLoader
 import torch.optim as optim
-from tqdm import tqdm
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
 
@@ -34,48 +33,6 @@ checkpoint_callback = ModelCheckpoint(
     save_weights_only=False,  # Сохранять полное состояние (модель, оптимизатор и т.д.)
     verbose=True  # Выводить информацию о сохранении
 )
-
-class FileFormer(L.LightningModule):
-    def __init__(self, encoder, decoder, loss_fn, config):
-        #comment
-        super().__init__()
-        self.encoder = encoder
-        self.decoder = decoder
-        self.loss_fn = loss_fn
-        self.config = config
-        self.automatic_optimization = True  # Для ручного управления оптимизацией
-
-    def training_step(self, batch, batch_idx):
-        tokens, masked_tokens, pads, hash, extention_tokenize = batch
-        encoder_out = self.encoder(hash, extention_tokenize)
-
-        decoder_out = self.decoder(masked_tokens, encoder_out, pads)
-
-        loss = self.loss_fn(
-            decoder_out.view(-1, self.config['encoder']['vocab_size']),
-            tokens.view(-1)
-        )
-
-        self.log("train_loss", loss, prog_bar=True, on_step=True, on_epoch=True)
-
-        opt = self.optimizers()
-        opt.zero_grad()
-
-        opt.step()
-
-        if batch_idx % configs['train']['interval4save'] == 0:
-            eval.evaluate(self.encoder, self.decoder, tokenizer, batch)
-        return loss
-
-    def configure_optimizers(self):
-        optimizer = optim.AdamW(
-            params=self.parameters(),
-            lr=self.config['train']['lr'],
-        )
-
-        return {
-            "optimizer": optimizer,
-        }
 
 fileformer = FileFormer(encoder, decoder, loss_fn, configs)
 trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'], callbacks=[checkpoint_callback])
