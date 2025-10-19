@@ -15,14 +15,10 @@ class CompressionEngine:
         :param device: Device to use for computations (e.g., 'cpu', 'cuda', 'mps').
         """
         self.config = config
-        self.encoder = model.encoder
-        self.decoder = model.decoder
+        self.model = model
         self.tokenizer = ByteLevelTokenizer()
         self.device = device
         self.apply_config()
-
-        self.encoder.eval().to(self.device)
-        self.decoder.eval().to(self.device)
 
     def update_config(self, config: Dict[str, Any]):
         """
@@ -73,8 +69,7 @@ class CompressionEngine:
         tensor_data = torch.tensor(restored_data).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            conditioning = self.encoder(tensor_hash, tensor_type)
-            repaired_data = self.decoder(tensor_data, conditioning)
+            repaired_data = self.model.forward(tensor_data, tensor_hash, tensor_type)
 
         return repaired_data
 
