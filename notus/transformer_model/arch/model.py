@@ -1,19 +1,21 @@
-from typing import Any
-
 import lightning as L
-from notus import eval
+from notus import eval, Encoder, Decoder
 import torch.optim as optim
 
 class FileFormer(L.LightningModule):
-    def __init__(self, encoder, decoder, loss_fn, config):
+    def __init__(self, loss_fn, config):
         #comment
         super().__init__()
         self.eval = eval
-        self.encoder = encoder
-        self.decoder = decoder
         self.loss_fn = loss_fn
         self.config = config
         self.automatic_optimization = True  # Для ручного управления оптимизацией
+
+        self.create_models()
+
+    def create_models(self):
+        self.encoder = Encoder(**self.config['encoder'])
+        self.decoder = Decoder(**self.config['decoder'])
 
     def training_step(self, batch, batch_idx):
         tokens, masked_tokens, pads, hash, extention_tokenize = batch

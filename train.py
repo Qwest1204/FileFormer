@@ -1,7 +1,6 @@
-from notus import Encoder, Decoder, utils, FileDataset, Muon, ByteLevelTokenizer, FileFormer
+from notus import utils, FileDataset, ByteLevelTokenizer, FileFormer
 import torch
 from torch.utils.data import DataLoader
-import torch.optim as optim
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint
 
@@ -18,10 +17,6 @@ dataloader = DataLoader(dataset, batch_size=configs['train']['batch_size'],
                         shuffle=True, num_workers=configs['train']['num_workers']
                         )
 
-#models
-encoder = Encoder(**configs['encoder'])
-decoder = Decoder(**configs['decoder'])
-
 #loss
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
 
@@ -34,7 +29,7 @@ checkpoint_callback = ModelCheckpoint(
     verbose=True  # Выводить информацию о сохранении
 )
 
-fileformer = FileFormer(encoder, decoder, loss_fn, configs)
+fileformer = FileFormer(loss_fn, configs)
 trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'], callbacks=[checkpoint_callback])
 trainer.fit(model=fileformer, train_dataloaders=dataloader)
 
