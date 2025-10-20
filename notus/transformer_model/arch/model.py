@@ -18,10 +18,10 @@ class FileFormer(L.LightningModule):
         self.decoder = Decoder(**self.config['decoder']).to(self.config['train']['device'])
 
     def training_step(self, batch, batch_idx):
-        metadata, tokens, masked_tokens, pads, hash, extention_tokenize = batch
+        metadata, tokens, masked_tokens, hash, extention_tokenize = batch
         encoder_out = self.encoder(metadata, hash, extention_tokenize)
 
-        decoder_out = self.decoder(masked_tokens, encoder_out, pads)
+        decoder_out = self.decoder(masked_tokens, encoder_out)
 
         loss = self.loss_fn(
             decoder_out.view(-1, self.config['encoder']['vocab_size']),
@@ -35,7 +35,7 @@ class FileFormer(L.LightningModule):
 
         opt.step()
 
-        if batch_idx % self.configs['train']['interval4save'] == 0:
+        if batch_idx % self.config['train']['interval4save'] == 0:
             self.eval.evaluate(self.forward, batch)
         return loss
 

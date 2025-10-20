@@ -24,12 +24,12 @@ checkpoint_callback = ModelCheckpoint(
     dirpath="checkpoints/",  # Папка для сохранения чекпоинтов
     filename="model-{epoch:02d}-{step:05d}",  # Шаблон имени файла
     every_n_train_steps=configs['train']['interval4save'],  # Сохранять каждые 1000 шагов
-    save_top_k=5,  # Сохранять все чекпоинты (не ограничивать количество)
+    #save_top_k=5,  # Сохранять все чекпоинты (не ограничивать количество)
     save_weights_only=False,  # Сохранять полное состояние (модель, оптимизатор и т.д.)
     verbose=True  # Выводить информацию о сохранении
 )
 
-fileformer = FileFormer(loss_fn, configs)
+fileformer = FileFormer(loss_fn = loss_fn, config = configs)
 trainer = L.Trainer(max_epochs=10, precision=configs['train']['precision'], callbacks=[checkpoint_callback])
 trainer.fit(model=fileformer, train_dataloaders=dataloader)
 

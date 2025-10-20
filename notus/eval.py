@@ -2,14 +2,14 @@ import torch
 from notus import ByteLevelTokenizer
 
 def evaluate(forward, x):
-    tokens, masked_tokens, pads, hash, extention_tokenize = x
+    metadata, tokens, masked_tokens, hash, extention_tokenize = x
     tokenizer = ByteLevelTokenizer()
     # Получаем mask_token и pad_token через tokenizer
     mask_token = tokenizer.encode("<mask>")[0]
     pad_token = tokenizer.encode("<pad>")[0]
 
     with torch.no_grad():
-        decoder_out = forward(masked_tokens, hash, extention_tokenize, pads)
+        decoder_out = forward(metadata, masked_tokens, hash, extention_tokenize)
         # Получаем предсказанные токены
         predicted_tokens = torch.argmax(decoder_out, dim=2)  # (bs, seq_len)
 
