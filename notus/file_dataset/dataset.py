@@ -55,6 +55,8 @@ class FileDataset(Dataset):
 
                 # Токен расширения файла
                 ext_token = torch.tensor([get_file_ext_as_token(file_name)], dtype=torch.long)
+                with open(file_path, 'rb') as f:
+                    meta = f.read(1024).hex()
 
                 # Открываем файл и создаем mmap для быстрого доступа
                 fd = open(file_name, 'rb')
@@ -64,6 +66,7 @@ class FileDataset(Dataset):
                 # Добавляем информацию о файле
                 self.file_infos.append({
                     'file_name': file_name,
+                    'metadata': meta,
                     'start_chunk': chunk_offset,
                     'end_chunk': chunk_offset + num_chunks - 1,
                     'hash_tokens': hash_tensor,
@@ -139,6 +142,11 @@ class FileDataset(Dataset):
 
         return masked
 
+    def processing_meta(self, index):
+        meta = self.get_file_info(index)['metadata']
+        tokens = self.tokenizer.encode(meta)
+        return torch.tensor([tokens], dtype=torch.long)
+
     def __len__(self):
         return self.total_chunks
 
@@ -152,6 +160,7 @@ class FileDataset(Dataset):
             return empty_tokens, empty_tokens.clone(), empty_mask, empty_hash, empty_ext
 
         chunk_index = index - info['start_chunk']
+        metatokens = self.processing_meta(index)
         tokens, pads = self.read_file(info, chunk_index)
         masked_tokens = self.mask_tokens(tokens)
 
@@ -160,7 +169,7 @@ class FileDataset(Dataset):
             print(f"Обнаружены NaN/Inf в токенах файла {info['file_name']}")
             tokens = torch.where(torch.isnan(tokens) | torch.isinf(tokens), torch.tensor(self.pad_token), tokens)
 
-        return tokens, masked_tokens, pads, info['hash_tokens'], info['ext_token']
+        return metatokens, tokens, masked_tokens, pads, info['hash_tokens'], info['ext_token']
 
     def __del__(self):
         # Закрываем все открытые файлы и mmap при уничтожении объекта
