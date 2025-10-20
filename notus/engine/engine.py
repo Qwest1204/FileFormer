@@ -69,7 +69,7 @@ class CompressionEngine:
         tensor_data = torch.tensor(restored_data).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            repaired_data = self.model.forward(tensor_data, tensor_hash, tensor_type)
+            repaired_data = self.model.forward(tensor_hash, tensor_data, tensor_hash, tensor_type)
 
         return repaired_data
 

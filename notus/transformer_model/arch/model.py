@@ -14,12 +14,12 @@ class FileFormer(L.LightningModule):
         self.create_models()
 
     def create_models(self):
-        self.encoder = Encoder(**self.config['encoder'])
-        self.decoder = Decoder(**self.config['decoder'])
+        self.encoder = Encoder(**self.config['encoder']).to(self.config['train']['device'])
+        self.decoder = Decoder(**self.config['decoder']).to(self.config['train']['device'])
 
     def training_step(self, batch, batch_idx):
-        tokens, masked_tokens, pads, hash, extention_tokenize = batch
-        encoder_out = self.encoder(hash, extention_tokenize)
+        metadata, tokens, masked_tokens, pads, hash, extention_tokenize = batch
+        encoder_out = self.encoder(metadata, hash, extention_tokenize)
 
         decoder_out = self.decoder(masked_tokens, encoder_out, pads)
 
@@ -49,7 +49,7 @@ class FileFormer(L.LightningModule):
             "optimizer": optimizer,
         }
 
-    def forward(self, data, hash, file_extention, pads=None):
-        encoder_out = self.encoder(hash, file_extention)
+    def forward(self, meta, data, hash, file_extention, pads=None):
+        encoder_out = self.encoder(meta, hash, file_extention)
         decoder_out = self.decoder(data, encoder_out, pads)
         return decoder_out

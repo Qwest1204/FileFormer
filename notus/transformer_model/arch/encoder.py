@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-from notus.transformer_model.arch.attention import SelfAttention, MultiHeadAttention, MultiQueryAttention
+from notus.transformer_model.arch.attention import MultiHeadAttention
+from notus.transformer_model.arch.pe import RotaryPositionalEmbeddings
 from notus.transformer_model.arch.mlp import MLP
 
 class EncoderBlock(nn.Module):
@@ -14,7 +15,7 @@ class EncoderBlock(nn.Module):
         super(EncoderBlock, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        self.attention = MultiHeadAttention(embedding_dim, num_heads, 0)
+        self.attention= MultiHeadAttention(embedding_dim, num_heads, 0)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
         self.norm1 = nn.LayerNorm(embedding_dim)
@@ -47,7 +48,9 @@ class Encoder(nn.Module):
         self.device = device
         self.file_type_emb = nn.Embedding(file_type_vocab, embedding_dim)
         self.hash_emb = nn.Embedding(vocab_size, embedding_dim)
+        self.metadata_emb = nn.Embedding(vocab_size, embedding_dim)
         self.pe = nn.Embedding(hash_len+1, embedding_dim)
+        self.metadataPE = RotaryPositionalEmbeddings(embedding_dim)
 
         self.layers = nn.ModuleList(
             [
@@ -68,13 +71,14 @@ class Encoder(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, hash, type, mask=None):
+    def forward(self, metadats, hash, type, mask=None):
         N, seqlen = hash.shape
         out = torch.cat([self.hash_emb(hash), self.file_type_emb(type)], dim=1)
         pos = torch.arange(0, seqlen+1).expand(N, seqlen+1).to(self.device)
         out = self.dropout(
             (out + self.pe(pos))
         )
+        out = torch.cat([self.metadataPE(self.metadata_emb(metadats)), out], dim=1)
         for layer in self.layers:
             out = layer(out, out, out, mask)
         return out
