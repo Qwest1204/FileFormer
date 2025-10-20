@@ -19,7 +19,6 @@ class FileDataset(Dataset):
         self.tokenizer = ByteLevelTokenizer()
         self.seq_len = seq_len
         self.vocab_size = vocab_size  # Добавляем проверку размера словаря
-        self.pad_token = self.tokenizer.encode("<pad>")[0]
         self.mask_token = self.tokenizer.encode("<mask>")[0]
         self.file_infos = []
         self.chunk_starts = []  # Для bisect поиска
@@ -43,14 +42,12 @@ class FileDataset(Dataset):
                 # Вычисляем хеш один раз
                 sha256_hash = hashlib.sha256()
                 with open(file_name, 'rb') as f:
-                    for chunk in iter(lambda: f.read(4096), b""):
+                    for chunk in iter(lambda: f.read(self.seq_len), b""):
                         sha256_hash.update(chunk)
                 hex_hash = sha256_hash.hexdigest()
                 hash_tokens = self.tokenizer.encode(hex_hash)
                 if len(hash_tokens) > 64:
                     hash_tokens = hash_tokens[:64]
-                else:
-                    hash_tokens.extend([self.pad_token] * (64 - len(hash_tokens)))
                 hash_tensor = torch.tensor(hash_tokens, dtype=torch.long)
 
                 # Токен расширения файла
@@ -103,41 +100,32 @@ class FileDataset(Dataset):
             data = mm[start_byte: start_byte + self.seq_len]
 
             if len(data) == 0:
-                return torch.full((self.seq_len,), self.pad_token), torch.zeros((1, self.seq_len))
+                return torch.tensor([], dtype=torch.long)
 
             # Конвертируем байты в hex строку для токенизации
             hex_data = data.hex()
             tokens = self.tokenizer.encode(hex_data)
 
-            # Обрезаем или дополняем до seq_len
+            # Обрезаем, если превышает seq_len
             if len(tokens) > self.seq_len:
                 tokens = tokens[:self.seq_len]
-                padding_mask = torch.ones((1, self.seq_len))
-            else:
-                padding_mask = torch.cat([
-                    torch.ones((1, len(tokens))),
-                    torch.zeros((1, self.seq_len - len(tokens)))
-                ], dim=1)
-                tokens += [self.pad_token] * (self.seq_len - len(tokens))
 
-            return torch.tensor(tokens, dtype=torch.long), padding_mask
+            return torch.tensor(tokens, dtype=torch.long)
 
         except Exception as e:
             print(f"Ошибка чтения файла {info['file_name']}: {e}")
-            return torch.full((self.seq_len,), self.pad_token), torch.zeros((1, self.seq_len))
+            return torch.tensor([], dtype=torch.long)
 
     def mask_tokens(self, x):
         masked = x.clone()
         if random.random() > 0.6:
             return masked
 
-        # Маскируем только не-pad токены
-        non_pad_indices = (masked != self.pad_token).nonzero(as_tuple=True)[0]
-        if len(non_pad_indices) == 0:
-            return masked
+        num_to_mask = max(1, int(len(masked) * 0.15))
+        if num_to_mask >= len(masked):
+            num_to_mask = len(masked) - 1 if len(masked) > 0 else 0
 
-        num_to_mask = max(1, int(len(non_pad_indices) * 0.15))
-        mask_indices = random.sample(non_pad_indices.tolist(), k=num_to_mask)
+        mask_indices = random.sample(range(len(masked)), k=num_to_mask)
         masked[mask_indices] = self.mask_token
 
         return masked
@@ -145,7 +133,7 @@ class FileDataset(Dataset):
     def processing_meta(self, index):
         meta = self.get_file_info(index)['metadata']
         tokens = self.tokenizer.encode(meta)
-        return torch.tensor([tokens], dtype=torch.long)
+        return torch.tensor(tokens, dtype=torch.long)
 
     def __len__(self):
         return self.total_chunks
@@ -153,23 +141,22 @@ class FileDataset(Dataset):
     def __getitem__(self, index):
         info = self.get_file_info(index)
         if info is None:
-            empty_tokens = torch.full((self.seq_len,), self.pad_token)
-            empty_mask = torch.zeros((1, self.seq_len))
-            empty_hash = torch.tensor([self.pad_token] * 64, dtype=torch.long)
+            empty_tokens = torch.tensor([], dtype=torch.long)
+            empty_hash = torch.tensor([], dtype=torch.long)
             empty_ext = torch.tensor([0], dtype=torch.long)
-            return empty_tokens, empty_tokens.clone(), empty_mask, empty_hash, empty_ext
+            return empty_tokens, empty_tokens.clone(), empty_hash, empty_ext
 
         chunk_index = index - info['start_chunk']
         metatokens = self.processing_meta(index)
-        tokens, pads = self.read_file(info, chunk_index)
+        tokens = self.read_file(info, chunk_index)
         masked_tokens = self.mask_tokens(tokens)
 
         # Финальная проверка на NaN и бесконечные значения (хотя для токенов это маловероятно)
         if torch.isnan(tokens).any() or torch.isinf(tokens).any():
             print(f"Обнаружены NaN/Inf в токенах файла {info['file_name']}")
-            tokens = torch.where(torch.isnan(tokens) | torch.isinf(tokens), torch.tensor(self.pad_token), tokens)
+            tokens = torch.where(torch.isnan(tokens) | torch.isinf(tokens), torch.tensor(0), tokens)
 
-        return metatokens, tokens, masked_tokens, pads, info['hash_tokens'], info['ext_token']
+        return metatokens, tokens, masked_tokens, info['hash_tokens'], info['ext_token']
 
     def __del__(self):
         # Закрываем все открытые файлы и mmap при уничтожении объекта
