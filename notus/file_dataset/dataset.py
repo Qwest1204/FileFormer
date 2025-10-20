@@ -150,6 +150,7 @@ class FileDataset(Dataset):
         metatokens = self.processing_meta(index)
         tokens = self.read_file(info, chunk_index)
         masked_tokens = self.mask_tokens(tokens)
+        print(masked_tokens.shape)
 
         # Финальная проверка на NaN и бесконечные значения (хотя для токенов это маловероятно)
         if torch.isnan(tokens).any() or torch.isinf(tokens).any():
