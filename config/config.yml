@@ -1,23 +1,23 @@
 encoder:
   vocab_size: 258
-  embedding_dim: 128
-  num_heads: 2
-  num_layers: 1
+  embedding_dim: 768
+  num_heads: 4
+  num_layers: 4
   hash_len: 64
-  d_ff: 64
+  d_ff: 256
   dropout: 0.1
   file_type_vocab: 935
-  device: "mps"
+  device: "cpu"
 decoder:
   vocab_size: 258
-  embedding_dim: 128
-  num_heads: 2
-  num_layers: 1
-  latent_dim: 256
-  d_ff: 64
+  embedding_dim: 768
+  num_heads: 8
+  num_layers: 6
+  latent_dim: 96
+  d_ff: 512
   dropout: 0.1
   chunk_size: 256
-  device: "mps"
+  device: "cpu"
 dataset:
   vocab_size: 258
   seq_len: 256
@@ -26,7 +26,7 @@ train:
   num_epoch: 50
   interval4save: 200
   lr: 0.01
-  device: "mps"
+  device: "cpu"
   precision: 32
   batch_size: 4
   num_workers: 0

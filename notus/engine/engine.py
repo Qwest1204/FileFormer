@@ -3,6 +3,7 @@ from notus.tokenizer import ByteLevelTokenizer
 
 import hashlib
 import torch
+from tqdm import tqdm
 
 
 class CompressionEngine:
@@ -34,21 +35,50 @@ class CompressionEngine:
         # Placeholder for applying config to model or other components if needed
         pass
 
-    def compress(self, chunk: bytes) -> Dict[str, str]:
+    def full_file_compress(self, file_path, meta_seek_from_st, meta_seek_from_end, chunk_size):
+        data = []
+        hashs = []
+        lens = []
+        with open(file_path, 'rb') as f:
+            mtd = f.read(meta_seek_from_st).hex()
+            for chunk in iter(lambda: f.read(chunk_size), b""):
+                ch = chunk.hex()
+                hashs.append(hashlib.sha256(chunk).hexdigest())
+                data.append(self.compress(ch))
+                lens.append(len(ch))
+
+        out = {
+            'mdata': mtd,
+            'data': data,
+            'lens': lens,
+            'hashs': hashs,
+        }
+        return out
+
+    def full_file_decompress(self, in_data):
+        decompressed_data = []
+        for i in tqdm(range(len(in_data['data']))):
+            result = self.decompress(in_data['hashs'][i], in_data['data'][i], [487])
+            result = torch.argmax(result, dim=2)
+            oo = self.tokenizer.decode(result.tolist()[0])
+            if i == len(in_data['lens']) - 1:
+                oo = oo[:in_data['lens'][i]]
+            decompressed_data.append(oo)
+        return decompressed_data
+
+    def compress(self, data_hex) -> Dict[str, str]:
         """
         Compress the given byte chunk using rule-based slicing.
 
         :param chunk: Input bytes to compress.
         :return: Dictionary with 'hash' (SHA256 hex) and 'data' (compressed string).
         """
-        data_hex = chunk.hex()
-        data_hash = hashlib.sha256(chunk).hexdigest()
 
         encoded_data = self.tokenizer.encode(data_hex)
         compressed_tokens = self._compress_tokens(encoded_data)
         compressed_data = self.tokenizer.decode(compressed_tokens)
 
-        return {"hash": data_hash, "data": compressed_data}
+        return compressed_data
 
     def decompress(self, data_hash: str, compressed_data: str, file_type: List[int]) -> torch.Tensor:
         """
