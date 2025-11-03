@@ -48,7 +48,7 @@ class MultiHeadAttention(nn.Module):
         self.fc_out = nn.Linear(emb_size, emb_size)
         self.scale_param = self.head_dim ** -0.5
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q, k, v, mask=None, output_attentions=False):
         bs, seqlen_q, dim = q.shape  # Extract seqlen from q for Q
         _, seqlen_kv, _ = k.shape
 
@@ -73,7 +73,12 @@ class MultiHeadAttention(nn.Module):
         attention_weights = F.softmax(attention_scores, dim=-1)
 
         output = torch.matmul(attention_weights, V).transpose(1, 2).contiguous().view(bs, seqlen_q, dim)
-        return self.fc_out(output)
+        output = self.fc_out(output)
+
+        if output_attentions:
+            return output, attention_weights
+
+        return output
 
 class MultiQueryAttention(nn.Module):
     def __init__(self, emb_size: int, num_heads: int, latent_dim):
@@ -216,7 +221,7 @@ class MultiHeadLatentAttention(nn.Module):
         x = x.permute(0, 2, 1, 3).contiguous()  # (B, N, H, latent_dim)
         return x.view(batch_size, -1, self.num_heads * self.latent_dim)
 
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, mask=None, output_attentions=False):
         bs, seqlen, dim = query.shape
 
         q = self.Q_to_latent(query)  # (bs, seqlen, num_heads * latent_dim)
@@ -239,4 +244,7 @@ class MultiHeadLatentAttention(nn.Module):
         attn_output = self._reshape_from_heads(attn_output)  # (bs, seqlen, num_heads * latent_dim)
         attn_output = self.fc_out(attn_output)  # (bs, seqlen, emb_size)
 
+        if output_attentions:
+            # Возвращаем weights в форме [bs*num_heads, seqlen_q, seqlen_kv], reshape если нужно
+            return attn_output, attention_weights.view(bs, self.num_heads, seqlen, seqlen)
         return attn_output

@@ -21,12 +21,18 @@ class EncoderBlock(nn.Module):
         self.norm2 = nn.LayerNorm(embedding_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, q, k, v, mask=None):
-        attention = self.attention(q, k, v, mask=mask)
+    def forward(self, q, k, v, mask=None, output_attentions=False):
+        if output_attentions:
+            attention, attn_weights = self.attention(q, k, v, mask=mask, output_attentions=True)
+        else:
+            attention = self.attention(q, k, v, mask=mask)
 
         x = self.dropout(self.norm1(attention + q))
         forward = self.mlp(x)
-        out = self.dropout(self.norm2(forward+x))
+        out = self.dropout(self.norm2(forward + x))
+
+        if output_attentions:
+            return out, attn_weights  # Возвращаем weights только для этого блока
         return out
 
 class Encoder(nn.Module):
@@ -68,15 +74,23 @@ class Encoder(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, hash, type, mask=None):
+    def forward(self, hash, type, mask=None, output_attentions=False):
         N, seqlen = hash.shape
         out = torch.cat([self.hash_emb(hash), self.file_type_emb(type)], dim=1)
         pos = torch.arange(0, seqlen+1).expand(N, seqlen+1).to(self.device)
         out = self.dropout(
             (out + self.pe(pos))
         )
+        attentions = []  # Список для сбора weights из всех слоев
         for layer in self.layers:
-            out = layer(out, out, out, mask)
+            if output_attentions:
+                out, layer_attn = layer(out, out, out, mask, output_attentions=True)
+                attentions.append(layer_attn)  # [layer1_weights, layer2_weights, ...]
+            else:
+                out = layer(out, out, out, mask)
+
+        if output_attentions:
+            return out, attentions
         return out
 
     def _init_weights(self):

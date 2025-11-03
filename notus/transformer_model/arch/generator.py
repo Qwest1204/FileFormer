@@ -29,22 +29,33 @@ class DecoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(embedding_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, context, padding_mask=None):
-
-        self_attention_out = self.self_attention(x, x, x, mask=padding_mask)
-        self_attention_out = self.dropout(self_attention_out)
+    def forward(self, x, context, padding_mask=None, output_attentions=False):
+        if output_attentions:
+            self_attention_out, self_attn_weights = self.self_attention(x, x, x, mask=padding_mask,
+                                                                        output_attentions=True)
+            self_attention_out = self.dropout(self_attention_out)
+        else:
+            self_attention_out = self.self_attention(x, x, x, mask=padding_mask)
+            self_attention_out = self.dropout(self_attention_out)
 
         x = self.norm1(x + self_attention_out)
 
-        cross_attention_out = self.cross_attention(x, context, context, mask=None)
-        cross_attention_out = self.dropout(cross_attention_out)
+        if output_attentions:
+            cross_attention_out, cross_attn_weights = self.cross_attention(x, context, context, mask=None,
+                                                                           output_attentions=True)
+            cross_attention_out = self.dropout(cross_attention_out)
+        else:
+            cross_attention_out = self.cross_attention(x, context, context, mask=None)
+            cross_attention_out = self.dropout(cross_attention_out)
 
         x = self.norm2(x + cross_attention_out)
 
         ff_out = self.mlp(x)
-
         x = self.norm3(x + self.dropout(ff_out))
 
+        if output_attentions:
+            # Возвращаем dict с weights для self и cross в этом слое
+            return x, {"self_attn": self_attn_weights, "cross_attn": cross_attn_weights}
         return x
 
 class Decoder(nn.Module):
@@ -81,7 +92,7 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.final_linear = nn.Linear(embedding_dim, vocab_size)
 
-    def forward(self, x, context, padding_mask=None):
+    def forward(self, x, context, padding_mask=None, output_attentions=False):
         # x: (bs, seq_len)
         #context: (bs, seq_len, emb_dim)
         N, seqlen = x.shape
@@ -90,6 +101,16 @@ class Decoder(nn.Module):
         out = self.dropout(
             (out + self.pe(out))
         )
+        attentions = []  # Список dict'ов для каждого слоя
         for layer in self.layers:
-            out = layer(out, context, padding_mask=padding_mask)
-        return self.final_linear(out)
+            if output_attentions:
+                out, layer_attns = layer(out, context, padding_mask=padding_mask, output_attentions=True)
+                attentions.append(layer_attns)  # [{"self_attn": ..., "cross_attn": ...}, ...]
+            else:
+                out = layer(out, context, padding_mask=padding_mask)
+
+        final_out = self.final_linear(out)
+
+        if output_attentions:
+            return final_out, attentions
+        return final_out
