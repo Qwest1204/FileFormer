@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from notus.transformer_model.arch.attention import SelfAttention, MultiHeadAttention, MultiQueryAttention
-from notus.transformer_model.arch.mlp import MLP
+from fileformer.transformer_model.arch.attention import SelfAttention, MultiHeadAttention, MultiQueryAttention
+from fileformer.transformer_model.arch.mlp import MLP
 
 class EncoderBlock(nn.Module):
     def __init__(self,

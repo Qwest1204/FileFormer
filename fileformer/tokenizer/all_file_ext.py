@@ -33,7 +33,7 @@ file_extensions = {
     '.class': 31,
     '.cmd': 32,
     '.com': 33,
-    '.config': 34,
+    '.configs': 34,
     '.cpl': 35,
     '.cpp': 36,
     '.crdownload': 37,

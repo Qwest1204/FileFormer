@@ -1,5 +1,5 @@
 import unittest
-from notus import Tokenizer
+from fileformer import Tokenizer
 
 class TestTokenizer(unittest.TestCase):
     def __init__(self, *args, **kwargs):

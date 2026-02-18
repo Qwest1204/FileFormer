@@ -1,5 +1,5 @@
 import lightning as L
-from notus import eval, Encoder, Decoder
+from fileformer import eval, Encoder, Decoder
 import torch.optim as optim
 
 class FileFormer(L.LightningModule):

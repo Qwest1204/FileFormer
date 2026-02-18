@@ -1,4 +1,4 @@
-from notus import utils, FileDataset, ByteLevelTokenizer, FileFormer
+from fileformer import utils, FileDataset, ByteLevelTokenizer, FileFormer
 import torch
 from torch.utils.data import DataLoader
 import lightning as L
@@ -8,7 +8,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 tokenizer = ByteLevelTokenizer()
 
 #configs
-configs = utils.load_config("/Users/daniilogorodnikov/PycharmProjects/Notus/config/config.yml")
+configs = utils.load_config("/configs/config.yml")
 
 #dataset
 dataset = FileDataset(**configs['dataset'])

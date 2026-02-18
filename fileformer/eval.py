@@ -1,5 +1,5 @@
 import torch
-from notus import ByteLevelTokenizer
+from fileformer import ByteLevelTokenizer
 
 def evaluate(forward, x):
     tokens, masked_tokens, pads, hash, extention_tokenize = x

@@ -9,7 +9,7 @@ from torch.ao.quantization import (
     DeQuantStub,
     float_qparams_weight_only_qconfig,
 )
-from notus import Encoder, Decoder
+from fileformer import Encoder, Decoder
 import torch.optim as optim
 
 class FileFormerQuant(L.LightningModule):
@@ -54,19 +54,19 @@ class FileFormerQuant(L.LightningModule):
         # 3. Применяем prepare_qat (без qconfig_dict)
         self.model_prepared = prepare_qat(self, inplace=False)
 
-    def forward(self, tokens, masked_tokens, pads, hash, extention_tokenize, output_attentions=False):
+    def forward(self, data, hash, file_extention, pads=None, output_attentions=False):
         # Вход в int8 (опционально)
         #x = self.quant(masked_tokens.float())
         # Используем encoder/decoder
-        encoder_out = self.encoder(hash, extention_tokenize)
-        decoder_out = self.decoder(masked_tokens, encoder_out, pads)
+        encoder_out = self.encoder(hash, file_extention)
+        decoder_out = self.decoder(data, encoder_out, pads)
         return self.dequant(decoder_out)
 
     def training_step(self, batch, batch_idx):
         tokens, masked_tokens, pads, hash, extention_tokenize = batch
 
         decoder_out = self.model_prepared.forward(
-            tokens, masked_tokens, pads, hash, extention_tokenize
+            masked_tokens, hash, extention_tokenize, pads
         )
 
         loss = self.loss_fn(

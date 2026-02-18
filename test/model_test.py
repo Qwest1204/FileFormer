@@ -1,6 +1,6 @@
 import unittest
 
-from notus import build_transformer
+from fileformer import build_transformer
 import torch
 
 class TestModel(unittest.TestCase):

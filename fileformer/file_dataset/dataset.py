@@ -5,9 +5,9 @@ import torch.nn.functional as F
 from pathlib import Path
 from tqdm import tqdm
 import hashlib
-from notus.tokenizer import ByteLevelTokenizer
+from fileformer.tokenizer import ByteLevelTokenizer
 import pandas as pd
-from notus.tokenizer.utils import get_file_ext_as_token
+from fileformer.tokenizer.utils import get_file_ext_as_token
 import numpy as np
 import bisect
 import mmap

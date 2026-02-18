@@ -1,9 +1,9 @@
-from notus import utils, FileFormer, FileDataset, FileFormerQuant
+from fileformer import utils, FileFormer, FileDataset, FileFormerQuant
 from torch.utils.data import DataLoader, random_split
 import torch
 from lightning import Trainer
 
-configs = utils.load_config("config/config.yml")
+configs = utils.load_config("configs/config.yml")
 loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
 
 device = configs['train']['device']
