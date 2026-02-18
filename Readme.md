@@ -32,7 +32,7 @@ To run the tests, run the following command
 request access to docker reg
 
 ```bash
-docker pull ghcr.io/mralphafile/notus/notus-dev-cuda:latest
+docker pull ghcr.io/mralphafile/fileformer/fileformer-dev-cuda:latest
 ```
 
 

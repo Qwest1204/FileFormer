@@ -1,0 +1,3 @@
+[submodule "fileformer/engine/patterns"]
+	path = fileformer/engine/patterns
+	url = https://github.com/WerWolv/ImHex-Patterns.git
