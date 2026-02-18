@@ -3,7 +3,7 @@ import hashlib
 import torch
 from tqdm import tqdm
 
-from notus.tokenizer import ByteLevelTokenizer  # Assuming this is a custom or specific tokenizer
+from fileformer.tokenizer import ByteLevelTokenizer  # Assuming this is a custom or specific tokenizer
 
 
 class CompressionEngine:
@@ -60,7 +60,7 @@ class CompressionEngine:
         :param file_path: Path to the input file.
         :param meta_seek_from_start: Bytes to read as starting metadata.
         :param meta_seek_from_end: Bytes to read as ending metadata.
-        :param chunk_size: Size of each data chunk in bytes (defaults to config['chunk_size']).
+        :param chunk_size: Size of each data chunk in bytes (defaults to configs['chunk_size']).
         :return: Dictionary with compressed data, hashes, lengths, and metadata.
         """
         if chunk_size is None:
