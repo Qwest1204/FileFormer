@@ -57,7 +57,7 @@ class FileDataset(Dataset):
         self.total_chunks = total_chunks
         self.metadata_cache = {}  # кэш для загруженных метаданных
 
-    def mask_tokens(self, x:torch.Tensor):
+    def mask_tokens(self, x:torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         rand_vals = torch.rand_like(x, dtype=torch.float)
         # Создаём булеву маску: True с вероятностью self.ratio (токены, которые заменим)
         mask = rand_vals < self.ratio
