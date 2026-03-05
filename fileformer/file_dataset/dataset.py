@@ -3,15 +3,14 @@ import torch
 import re
 import os
 import glob
-from typing import Optional, Tuple
 
-from pathlib import Path
 from torch.utils.data import Dataset
 from safetensors.torch import load_file
 from fileformer.tokenizer import ByteLevelTokenizer
 
+
 class FileDataset(Dataset):
-    def __init__(self, path):
+    def __init__(self, path, ratio):
         """
         path: корневая директория, содержащая подпапки с чанками данных.
         """
@@ -20,6 +19,7 @@ class FileDataset(Dataset):
         self.pad_token_id = self.tokenizer.encode("<pad>")[0]
         self.mask_token_id = self.tokenizer.encode("<mask>")[0]
         self.vocab = self.tokenizer.vocab_size
+        self.ratio = ratio
 
         # Получаем все поддиректории (каждая соответствует одному исходному файлу)
         subdirs = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
@@ -56,6 +56,16 @@ class FileDataset(Dataset):
         self.total_chunks = total_chunks
         self.metadata_cache = {}  # кэш для загруженных метаданных
 
+    def mask_tokens(self, x):
+        rand_vals = torch.rand_like(x, dtype=torch.float)
+        # Создаём булеву маску: True с вероятностью self.ratio (токены, которые заменим)
+        mask = rand_vals < self.ratio
+        # Исключаем pad-токены из маски
+        mask = mask & (x != self.pad_token_id)
+        # Заменяем отмеченные токены на mask_token_id, остальные оставляем без изменений
+        masked_x = torch.where(mask, self.mask_token_id, x)
+        return masked_x, mask
+
     def __len__(self):
         return self.total_chunks
 
@@ -89,5 +99,7 @@ class FileDataset(Dataset):
             self.metadata_cache[meta_file] = load_file(meta_file)
         meta_tensors = self.metadata_cache[meta_file]
 
+        masked_data, mask = self.mask_tokens(data_tensors['tokenized_data'])
+
         # Возвращаем словарь с тензорами токенов и хешами (хеши опциональны)
-        return data_tensors['tokenized_data'], meta_tensors['tokenized_metadata'], data_tensors.get('hash_tokens'), meta_tensors.get('hash_tokens')
+        return masked_data, mask, data_tensors['tokenized_data'], meta_tensors['tokenized_metadata'], data_tensors.get('hash_tokens'), meta_tensors.get('hash_tokens')
