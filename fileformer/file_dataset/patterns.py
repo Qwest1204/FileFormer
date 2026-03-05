@@ -1,0 +1,1 @@
+META_END_MARKERS = [b'IDAT', b'data', b'mdat', b'\xFF\xDA', b'\x0A\x0A']
