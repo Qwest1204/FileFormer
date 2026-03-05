@@ -1,6 +1,7 @@
 import random
 import torch
 import re
+from typing import Tuple
 import os
 import glob
 
@@ -10,7 +11,7 @@ from fileformer.tokenizer import ByteLevelTokenizer
 
 
 class FileDataset(Dataset):
-    def __init__(self, path, ratio):
+    def __init__(self, path:str, ratio:int):
         """
         path: корневая директория, содержащая подпапки с чанками данных.
         """
@@ -56,7 +57,7 @@ class FileDataset(Dataset):
         self.total_chunks = total_chunks
         self.metadata_cache = {}  # кэш для загруженных метаданных
 
-    def mask_tokens(self, x):
+    def mask_tokens(self, x:torch.Tensor):
         rand_vals = torch.rand_like(x, dtype=torch.float)
         # Создаём булеву маску: True с вероятностью self.ratio (токены, которые заменим)
         mask = rand_vals < self.ratio
@@ -69,7 +70,7 @@ class FileDataset(Dataset):
     def __len__(self):
         return self.total_chunks
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx:int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         if idx < 0 or idx >= self.total_chunks:
             raise IndexError(f"Index {idx} out of range [0, {self.total_chunks})")
 
