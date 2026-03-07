@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from fileformer.transformer_model.arch.attention import MultiHeadAttention, MultiHeadLatentAttention
+from fileformer.transformer_model.arch.attention import MultiHeadAttention, MultiHeadLatentAttention, MultiHeadLinearAttention
 from fileformer.transformer_model.arch.pe import RotaryPositionalEmbeddings
 from fileformer.transformer_model.arch.mlp import MLP
 import torch.nn.functional as F
@@ -19,17 +19,15 @@ class DecoderLayer(nn.Module):
         super(DecoderLayer, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        self.self_attention = MultiHeadLatentAttention(embedding_dim, num_heads, latent_dim)
-        self.cross_attention = MultiHeadAttention(embedding_dim, num_heads, latent_dim)
+        self.self_attention = MultiHeadLinearAttention(embedding_dim, num_heads, latent_dim)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
         #define normalization
         self.norm1 = nn.LayerNorm(embedding_dim)
-        self.norm2 = nn.LayerNorm(embedding_dim)
         self.norm3 = nn.LayerNorm(embedding_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, context, padding_mask=None, output_attentions=False):
+    def forward(self, x, padding_mask=None, output_attentions=False):
         if output_attentions:
             self_attention_out, self_attn_weights = self.self_attention(x, x, x, mask=padding_mask,
                                                                         output_attentions=True)
@@ -40,22 +38,12 @@ class DecoderLayer(nn.Module):
 
         x = self.norm1(x + self_attention_out)
 
-        if output_attentions:
-            cross_attention_out, cross_attn_weights = self.cross_attention(x, context, context, mask=None,
-                                                                           output_attentions=True)
-            cross_attention_out = self.dropout(cross_attention_out)
-        else:
-            cross_attention_out = self.cross_attention(x, context, context, mask=None)
-            cross_attention_out = self.dropout(cross_attention_out)
-
-        x = self.norm2(x + cross_attention_out)
-
         ff_out = self.mlp(x)
         x = self.norm3(x + self.dropout(ff_out))
 
         if output_attentions:
             # Возвращаем dict с weights для self и cross в этом слое
-            return x, {"self_attn": self_attn_weights, "cross_attn": cross_attn_weights}
+            return x, {"self_attn": self_attn_weights}
         return x
 
 class Decoder(nn.Module):
@@ -67,7 +55,6 @@ class Decoder(nn.Module):
                  device: str,
                  d_ff: int,
                  dropout: float,
-                 chunk_size: int,
                  latent_dim: int,
                  activation_type: str = 'relu',
                  ):
@@ -92,7 +79,7 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.final_linear = nn.Linear(embedding_dim, vocab_size)
 
-    def forward(self, x, context, padding_mask=None, output_attentions=False):
+    def forward(self, x, padding_mask=None, output_attentions=False):
         # x: (bs, seq_len)
         #context: (bs, seq_len, emb_dim)
         N, seqlen = x.shape
@@ -104,10 +91,10 @@ class Decoder(nn.Module):
         attentions = []  # Список dict'ов для каждого слоя
         for layer in self.layers:
             if output_attentions:
-                out, layer_attns = layer(out, context, padding_mask=padding_mask, output_attentions=True)
+                out, layer_attns = layer(out, padding_mask=padding_mask, output_attentions=True)
                 attentions.append(layer_attns)  # [{"self_attn": ..., "cross_attn": ...}, ...]
             else:
-                out = layer(out, context, padding_mask=padding_mask)
+                out = layer(out, padding_mask=padding_mask)
 
         final_out = self.final_linear(out)
 

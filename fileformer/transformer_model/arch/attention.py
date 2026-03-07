@@ -118,12 +118,14 @@ class MultiQueryAttention(nn.Module):
         return self.fc_out(output)
 
 class MultiHeadLinearAttention(nn.Module):
-    def __init__(self, emb_size: int, num_heads: int, latent_dim):
+    def __init__(self, emb_size: int, num_heads: int, latent_dim=None):
         super(MultiHeadLinearAttention, self).__init__()
         assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
 
         self.num_heads = num_heads
         self.head_dim = emb_size // num_heads
+        # latent_dim не используется, оставлен для совместимости
+        self.latent_dim = latent_dim if latent_dim is not None else self.head_dim
 
         self.Q_layer = nn.Linear(emb_size, num_heads * self.head_dim)
         self.K_layer = nn.Linear(emb_size, num_heads * self.head_dim)
@@ -133,60 +135,70 @@ class MultiHeadLinearAttention(nn.Module):
         self.scale_param = self.head_dim ** -0.5
 
     def _reshape_to_heads(self, x):
-        # Переформатирование: (B, N, D) -> (B, N, H, d_h) -> (B*H, N, d_h)
         batch_size, seq_len, _ = x.shape
         x = x.view(batch_size, seq_len, self.num_heads, self.head_dim)
         x = x.permute(0, 2, 1, 3).contiguous()  # (B, H, N, d_h)
         return x.view(batch_size * self.num_heads, -1, self.head_dim)  # (B*H, N, d_h)
 
     def _reshape_from_heads(self, x):
-        # Обратное: (B*H, N, d_h) -> (B, H, N, d_h) -> (B, N, H*d_h)
         batch_size = x.shape[0] // self.num_heads
         x = x.view(batch_size, self.num_heads, -1, self.head_dim)
         x = x.permute(0, 2, 1, 3).contiguous()  # (B, N, H, d_h)
         return x.view(batch_size, -1, self.num_heads * self.head_dim)  # (B, N, D)
 
     def phi(self, x):
-        """Feature map: ELU(x) + 1 для позитива."""
+        """Feature map: ELU(x) + 1 для обеспечения положительности."""
         return F.elu(x) + 1
 
     def forward(self, query, key, value, mask=None):
-        bs, seqlen, dim = query.shape
+        # query, key, value: (batch, seq_len_q/k/v, emb_size)
+        # mask: (batch, seq_len_k) булева маска (True для игнорируемых позиций)
+        bs = query.shape[0]
 
         q = self.Q_layer(query)
         k = self.K_layer(key)
         v = self.V_layer(value)
 
-        q = self._reshape_to_heads(q)
-        k = self._reshape_to_heads(k)
-        v = self._reshape_to_heads(v)
+        q = self._reshape_to_heads(q)  # (B*H, Nq, d_h)
+        k = self._reshape_to_heads(k)  # (B*H, Nk, d_h)
+        v = self._reshape_to_heads(v)  # (B*H, Nk, d_h)
 
+        # Масштабирование
         q = q * self.scale_param
         k = k * self.scale_param
 
-        phi_q = self.phi(q)
-        phi_k = self.phi(k)
+        # Применяем feature map
+        phi_q = self.phi(q)  # (B*H, Nq, d_h)
+        phi_k = self.phi(k)  # (B*H, Nk, d_h)
 
+        # Применяем маску к ключам и значениям (если есть)
         if mask is not None:
+            # mask: (B, Nk) -> (B*H, Nk, 1)
             pad_mask = mask.repeat_interleave(self.num_heads, dim=0).unsqueeze(-1)
-            pad_mask = pad_mask.unsqueeze(-1).bool()
             phi_k = phi_k.masked_fill(pad_mask, 0.0)
+            v = v.masked_fill(pad_mask, 0.0)
 
+        # Вычисляем матрицу памяти S = sum_i phi_k[i]^T @ v[i]  (по i от 1 до Nk)
+        # phi_k: (B*H, Nk, d_h), v: (B*H, Nk, d_h) -> S: (B*H, d_h, d_h)
+        S = torch.einsum('b n d, b n e -> b d e', phi_k, v)
 
+        # Вычисляем сумму phi_k для нормализации
+        Z = phi_k.sum(dim=1)  # (B*H, d_h)
 
-        # Z = phi_k^T @ ones  (B*H, d_h)
-        Z = phi_k.sum(dim=1)  # sum over seq_len (B*H, d_h)
+        # Вычисляем числитель: phi_q @ S  -> (B*H, Nq, d_h)
+        num = torch.einsum('b n d, b d e -> b n e', phi_q, S)
 
-        # num = phi_q @ S  (B*H, Nq, d_h)
-        num = torch.einsum('bnd,bde->bne', phi_q, S)
+        # Вычисляем знаменатель: phi_q @ Z  -> (B*H, Nq)
+        den = torch.einsum('b n d, b d -> b n', phi_q, Z).unsqueeze(-1)  # (B*H, Nq, 1)
+        den = den.clamp(min=1e-8)
 
-        # den = phi_q @ Z  (B*H, Nq)
-        den = torch.einsum('bnd,bd->bn', phi_q, Z).clamp(min=1e-8).unsqueeze(-1)
-
+        # Выход внимания
         attn_output = num / den  # (B*H, Nq, d_h)
 
-        attn_output = self._reshape_from_heads(attn_output)
+        # Обратное преобразование голов
+        attn_output = self._reshape_from_heads(attn_output)  # (B, Nq, D)
 
+        # Финальный проекционный слой
         attn_output = self.fc_out(attn_output)
 
         return attn_output
