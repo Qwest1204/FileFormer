@@ -1,3 +1,3 @@
-__all__ = ['FileDataset']
+__all__ = ['FileDataset', 'ENWIK8Dataset']
 
-from .dataset import FileDataset
+from .dataset import FileDataset, ENWIK8Dataset

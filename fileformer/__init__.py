@@ -1,24 +1,21 @@
 __all__ = [
     'ByteLevelTokenizer',
-    'CompressionEngine',
     'Decoder',
     'Encoder',
     'FileDataset',
     'FileFormer',
+    'ENWIK8Dataset',
     'FileFormerQuant',
     'Muon',
     'attention',
     'eval',
-    'file_tokenizer_utils',
     'mlp',
     'utils',
     'RotaryPositionalEmbeddings'
 ]
 
-from fileformer.file_dataset import FileDataset
-from fileformer.engine.engine import CompressionEngine
+from fileformer.file_dataset import FileDataset, ENWIK8Dataset
 from fileformer.tokenizer import ByteLevelTokenizer
-from fileformer.tokenizer import utils as file_tokenizer_utils
 from fileformer.transformer_model.arch.encoder import Encoder
 from fileformer.transformer_model.arch.generator import Decoder
 from fileformer.transformer_model.arch.model import FileFormer

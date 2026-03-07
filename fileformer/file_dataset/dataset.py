@@ -4,14 +4,16 @@ import re
 from typing import Tuple
 import os
 import glob
+import hashlib
+import json
 
 from torch.utils.data import Dataset
-from safetensors.torch import load_file
+from safetensors.torch import load_file, safe_open, save_file
 from fileformer.tokenizer import ByteLevelTokenizer
 
 
 class FileDataset(Dataset):
-    def __init__(self, path:str, ratio:int):
+    def __init__(self, path:str, ratio:float):
         """
         path: корневая директория, содержащая подпапки с чанками данных.
         """
@@ -57,16 +59,6 @@ class FileDataset(Dataset):
         self.total_chunks = total_chunks
         self.metadata_cache = {}  # кэш для загруженных метаданных
 
-    def mask_tokens(self, x:torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        rand_vals = torch.rand_like(x, dtype=torch.float)
-        # Создаём булеву маску: True с вероятностью self.ratio (токены, которые заменим)
-        mask = rand_vals < self.ratio
-        # Исключаем pad-токены из маски
-        mask = mask & (x != self.pad_token_id)
-        # Заменяем отмеченные токены на mask_token_id, остальные оставляем без изменений
-        masked_x = torch.where(mask, self.mask_token_id, x)
-        return masked_x, mask
-
     def __len__(self):
         return self.total_chunks
 
@@ -100,7 +92,104 @@ class FileDataset(Dataset):
             self.metadata_cache[meta_file] = load_file(meta_file)
         meta_tensors = self.metadata_cache[meta_file]
 
-        masked_data, mask = self.mask_tokens(data_tensors['tokenized_data'])
-
         # Возвращаем словарь с тензорами токенов и хешами (хеши опциональны)
-        return masked_data, mask, data_tensors['tokenized_data'], meta_tensors['tokenized_metadata'], data_tensors.get('hash_tokens'), meta_tensors.get('hash_tokens')
+        return data_tensors['tokenized_data'], meta_tensors['tokenized_metadata'], data_tensors.get('hash_tokens'), meta_tensors.get('hash_tokens')
+
+
+class ENWIK8Dataset(Dataset):
+    """
+       Args:
+           file_path (str): путь к бинарному файлу.
+           tokenizer: токенизатор с методами encode и pad_token_id.
+           seq_len (int): желаемая длина последовательности токенов.
+           overlap (int): количество перекрывающихся токенов между соседними окнами.
+           cache_dir (str, optional): директория для сохранения кэша. Если None,
+                                       используется папка рядом с file_path.
+           force_rebuild (bool): принудительно пересоздать кэш, даже если он существует.
+       """
+
+    def __init__(self, file_path:str, tokenizer:ByteLevelTokenizer, seq_len:int, overlap:int, cache_dir=None, force_rebuild=False):
+        self.tokenizer = tokenizer
+        self.seq_len = seq_len
+        self.overlap = overlap
+        self.stride = seq_len - overlap
+
+        if self.stride <= 0:
+            raise ValueError("overlap должно быть меньше seq_len")
+
+        # Определяем путь для кэша
+        if cache_dir is None:
+            cache_dir = os.path.dirname(file_path)
+        os.makedirs(cache_dir, exist_ok=True)
+
+        # Генерируем уникальное имя для кэша на основе параметров
+        params = f"{os.path.basename(file_path)}_{seq_len}_{overlap}_{os.path.getsize(file_path)}"
+        hash_id = hashlib.md5(params.encode()).hexdigest()
+
+        self.cache_path = os.path.join(cache_dir, f"hexds_{hash_id}.safetensors")
+        self.meta_path = os.path.join(cache_dir, f"hexds_{hash_id}.json")
+
+        if not force_rebuild and os.path.exists(self.cache_path) and os.path.exists(self.meta_path):
+            # Загружаем метаданные из JSON
+            with open(self.meta_path, "r") as f:
+                meta = json.load(f)
+            self.num_samples = meta["num_samples"]
+            self.seq_len = meta["seq_len"]
+            self.overlap = meta["overlap"]
+        else:
+            # Кэша нет — строим датасет с нуля
+            self._build_cache(file_path)
+
+        # Открываем safetensors-файл для последующего чтения по индексу
+        # Объект остаётся открытым на всё время жизни датасета
+        self.safetensors = safe_open(self.cache_path, framework="pt", device="cpu")
+
+    def _build_cache(self, file_path):
+        """Строит кэш: читает файл, токенизирует, создаёт окна и сохраняет их в safetensors."""
+        # Чтение всего файла (всё равно необходимо для токенизации)
+        with open(file_path, 'rb') as f:
+            byte_data = f.read()
+        hex_str = byte_data.hex()
+        full_tokens = self.tokenizer.encode(hex_str)  # полный список токенов
+
+        # Разбиение на окна
+        samples = []
+        total_len = len(full_tokens)
+        start = 0
+        while start + self.seq_len <= total_len:
+            chunk = full_tokens[start:start + self.seq_len]
+            samples.append(chunk)
+            start += self.stride
+
+        # Последнее неполное окно
+        if start < total_len:
+            chunk = full_tokens[start:]
+            pad_len = self.seq_len - len(chunk)
+            chunk = chunk + [self.tokenizer.encode("<pad>")[0]] * pad_len
+            samples.append(chunk)
+
+        # Преобразуем в тензоры и создаём словарь для safetensors
+        tensor_dict = {str(i): torch.tensor(seq, dtype=torch.long) for i, seq in enumerate(samples)}
+        self.num_samples = len(samples)
+
+        # Сохраняем safetensors
+        save_file(tensor_dict, self.cache_path)
+
+        # Сохраняем метаданные
+        meta = {
+            "num_samples": self.num_samples,
+            "seq_len": self.seq_len,
+            "overlap": self.overlap
+        }
+        with open(self.meta_path, "w") as f:
+            json.dump(meta, f)
+
+        # Очищаем большие списки (они больше не нужны)
+        del full_tokens, samples, tensor_dict
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx):
+        # Загружаем только один тензор по ключу (индекс как строка)
+        return self.safetensors.get_tensor(str(idx))
