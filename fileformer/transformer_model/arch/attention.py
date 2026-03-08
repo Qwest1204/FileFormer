@@ -119,113 +119,66 @@ class MultiQueryAttention(nn.Module):
 
 class MultiHeadLinearAttention(nn.Module):
     def __init__(self, emb_size: int, num_heads: int, latent_dim=None):
-        super(MultiHeadLinearAttention, self).__init__()
-        assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
-
+        super().__init__()
+        assert emb_size % num_heads == 0
         self.num_heads = num_heads
         self.head_dim = emb_size // num_heads
-        # latent_dim не используется, оставлен для совместимости
         self.latent_dim = latent_dim if latent_dim is not None else self.head_dim
-
         self.Q_layer = nn.Linear(emb_size, num_heads * self.head_dim)
         self.K_layer = nn.Linear(emb_size, num_heads * self.head_dim)
         self.V_layer = nn.Linear(emb_size, num_heads * self.head_dim)
-
         self.fc_out = nn.Linear(num_heads * self.head_dim, emb_size)
         self.scale_param = self.head_dim ** -0.5
 
     def _reshape_to_heads(self, x):
-        batch_size, seq_len, _ = x.shape
-        x = x.view(batch_size, seq_len, self.num_heads, self.head_dim)
-        x = x.permute(0, 2, 1, 3).contiguous()  # (B, H, N, d_h)
-        return x.view(batch_size * self.num_heads, -1, self.head_dim)  # (B*H, N, d_h)
+        B, N, _ = x.shape
+        x = x.view(B, N, self.num_heads, self.head_dim).permute(0, 2, 1, 3).contiguous()
+        return x.view(B * self.num_heads, N, self.head_dim)
 
     def _reshape_from_heads(self, x):
-        batch_size = x.shape[0] // self.num_heads
-        x = x.view(batch_size, self.num_heads, -1, self.head_dim)
-        x = x.permute(0, 2, 1, 3).contiguous()  # (B, N, H, d_h)
-        return x.view(batch_size, -1, self.num_heads * self.head_dim)  # (B, N, D)
+        B = x.shape[0] // self.num_heads
+        x = x.view(B, self.num_heads, -1, self.head_dim).permute(0, 2, 1, 3).contiguous()
+        return x.view(B, -1, self.num_heads * self.head_dim)
 
     def phi(self, x):
-        """Feature map: ELU(x) + 1 для обеспечения положительности."""
         return F.elu(x) + 1
 
     def forward(self, query, key, value, mask=None, causal=False):
-        # query, key, value: (batch, seq_len_q/k/v, emb_size)
-        # mask: (batch, seq_len_k) булева маска (True для игнорируемых позиций)
-        bs = query.shape[0]
-
+        B = query.shape[0]
         q = self.Q_layer(query)
         k = self.K_layer(key)
         v = self.V_layer(value)
 
-        q = self._reshape_to_heads(q)  # (B*H, Nq, d_h)
-        k = self._reshape_to_heads(k)  # (B*H, Nk, d_h)
-        v = self._reshape_to_heads(v)  # (B*H, Nk, d_h)
+        q = self._reshape_to_heads(q)
+        k = self._reshape_to_heads(k)
+        v = self._reshape_to_heads(v)
 
-        # Масштабирование
         q = q * self.scale_param
         k = k * self.scale_param
 
-        # Применяем feature map
-        phi_q = self.phi(q)  # (B*H, Nq, d_h)
-        phi_k = self.phi(k)  # (B*H, Nk, d_h)
+        phi_q = self.phi(q)
+        phi_k = self.phi(k)
 
-        # Применяем маску к ключам и значениям (если есть)
         if mask is not None:
-            # mask: (B, Nk) -> (B*H, Nk, 1)
             pad_mask = mask.repeat_interleave(self.num_heads, dim=0).unsqueeze(-1)
-            phi_k = phi_k.masked_fill(pad_mask, 0.0)
-            v = v.masked_fill(pad_mask, 0.0)
+            phi_k = phi_k.masked_fill(pad_mask, 0.)
+            v = v.masked_fill(pad_mask, 0.)
 
         if causal:
-            # Каузальный режим: используем кумулятивные суммы вдоль последовательности
-            # phi_k: (B*H, Nk, d_h), v: (B*H, Nk, d_h)
-
-            # Вычисляем кумулятивные суммы по длине для нормализации Z
-            Z_cum = torch.cumsum(phi_k, dim=1)  # (B*H, Nk, d_h)
-
-            # Вычисляем кумулятивные суммы для матрицы памяти S (phi_k^T @ v)
-            # Сначала внешнее произведение: (B*H, Nk, d_h, d_h)
-            outer = phi_k.unsqueeze(-1) * v.unsqueeze(-2)  # (B*H, Nk, d_h, d_h)
-            S_cum = torch.cumsum(outer, dim=1)  # (B*H, Nk, d_h, d_h)
-
-            # Для каждого запроса используем накопленные суммы до соответствующей позиции
-            # phi_q: (B*H, Nq, d_h), причём в каузальном случае Nq == Nk (обычно)
-            # Вычисляем числитель и знаменатель для всех позиций сразу
-            # einsum('b n d, b n d e -> b n e', phi_q, S_cum) -> (B*H, Nq, d_h)
-            num = torch.einsum('b n d, b n d e -> b n e', phi_q, S_cum)
-
-            # Знаменатель: (B*H, Nq, d_h) * (B*H, Nq, d_h) -> (B*H, Nq)
-            den = torch.einsum('b n d, b n d -> b n', phi_q, Z_cum).unsqueeze(-1)  # (B*H, Nq, 1)
-            den = den.clamp(min=1e-8)
-
-            attn_output = num / den  # (B*H, Nq, d_h)
-
+            Z_cum = torch.cumsum(phi_k, dim=1)
+            S_cum = torch.cumsum(phi_k.unsqueeze(-1) * v.unsqueeze(-2), dim=1)
+            num = torch.matmul(phi_q.unsqueeze(-2), S_cum).squeeze(-2)
+            den = (phi_q * Z_cum).sum(dim=-1, keepdim=True).clamp(min=1e-8)
+            attn_output = num / den
         else:
-            # Полное (некаузальное) внимание: одна матрица памяти на всю последовательность
-            # S = sum_j phi_k[j]^T v[j]   (B*H, d_h, d_h)
-            S = torch.einsum('b n d, b n e -> b d e', phi_k, v)
+            S = torch.matmul(phi_k.transpose(1, 2), v)
+            Z = phi_k.sum(dim=1, keepdim=True)
+            num = torch.matmul(phi_q, S)
+            den = torch.matmul(phi_q, Z.transpose(-1, -2)).clamp(min=1e-8)
+            attn_output = num / den
 
-            # Z = sum_j phi_k[j]   (B*H, d_h)
-            Z = phi_k.sum(dim=1)  # (B*H, d_h)
-
-            # Числитель: (B*H, Nq, d_h) = phi_q @ S
-            num = torch.einsum('b n d, b d e -> b n e', phi_q, S)
-
-            # Знаменатель: (B*H, Nq, 1) = (phi_q @ Z).unsqueeze(-1)
-            den = torch.einsum('b n d, b d -> b n', phi_q, Z).unsqueeze(-1)
-            den = den.clamp(min=1e-8)
-
-            attn_output = num / den  # (B*H, Nq, d_h)
-
-        # Обратное преобразование голов
-        attn_output = self._reshape_from_heads(attn_output)  # (B, Nq, D)
-
-        # Финальный проекционный слой
-        attn_output = self.fc_out(attn_output)
-
-        return attn_output
+        attn_output = self._reshape_from_heads(attn_output)
+        return self.fc_out(attn_output)
 
 class MultiHeadLatentAttention(nn.Module):
     def __init__(self, emb_size: int, num_heads: int, latent_dim: int):
