@@ -154,11 +154,13 @@ class ENWIK8Dataset(Dataset):
 
         # Разбиение на окна
         samples = []
+        masks = []
         total_len = len(full_tokens)
         start = 0
         while start + self.seq_len <= total_len:
             chunk = full_tokens[start:start + self.seq_len]
             samples.append(chunk)
+            masks.append(torch.zeros(self.seq_len, dtype=torch.long))
             start += self.stride
 
         # Последнее неполное окно
@@ -166,10 +168,16 @@ class ENWIK8Dataset(Dataset):
             chunk = full_tokens[start:]
             pad_len = self.seq_len - len(chunk)
             chunk = chunk + [self.tokenizer.encode("<pad>")[0]] * pad_len
+            last_mask = torch.zeros(self.seq_len, dtype=torch.long)
+            last_mask[-pad_len:] = 1
+            masks.append(last_mask)
             samples.append(chunk)
 
-        # Преобразуем в тензоры и создаём словарь для safetensors
-        tensor_dict = {str(i): torch.tensor(seq, dtype=torch.long) for i, seq in enumerate(samples)}
+        tensor_dict = {}
+        for i, seq in enumerate(samples):
+            tensor_dict[f"input_ids_{i}"] = torch.tensor(seq, dtype=torch.long)
+            tensor_dict[f"attention_mask_{i}"] = masks[i]  # предполагаем, что masks[i] уже тензор
+
         self.num_samples = len(samples)
 
         # Сохраняем safetensors
@@ -191,5 +199,8 @@ class ENWIK8Dataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        # Загружаем только один тензор по ключу (индекс как строка)
-        return self.safetensors.get_tensor(str(idx))
+        # Загружаем оба тензора для примера с индексом idx
+        input_ids = self.safetensors.get_tensor(f"input_ids_{idx}")
+        attention_mask = self.safetensors.get_tensor(f"attention_mask_{idx}")
+        causal_mask = torch.tril(torch.ones(self.seq_len, self.seq_len))
+        return input_ids, attention_mask, causal_mask,

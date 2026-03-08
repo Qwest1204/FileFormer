@@ -150,7 +150,7 @@ class MultiHeadLinearAttention(nn.Module):
         """Feature map: ELU(x) + 1 для обеспечения положительности."""
         return F.elu(x) + 1
 
-    def forward(self, query, key, value, mask=None):
+    def forward(self, query, key, value, mask=None, causal=False):
         # query, key, value: (batch, seq_len_q/k/v, emb_size)
         # mask: (batch, seq_len_k) булева маска (True для игнорируемых позиций)
         bs = query.shape[0]
@@ -178,22 +178,46 @@ class MultiHeadLinearAttention(nn.Module):
             phi_k = phi_k.masked_fill(pad_mask, 0.0)
             v = v.masked_fill(pad_mask, 0.0)
 
-        # Вычисляем матрицу памяти S = sum_i phi_k[i]^T @ v[i]  (по i от 1 до Nk)
-        # phi_k: (B*H, Nk, d_h), v: (B*H, Nk, d_h) -> S: (B*H, d_h, d_h)
-        S = torch.einsum('b n d, b n e -> b d e', phi_k, v)
+        if causal:
+            # Каузальный режим: используем кумулятивные суммы вдоль последовательности
+            # phi_k: (B*H, Nk, d_h), v: (B*H, Nk, d_h)
 
-        # Вычисляем сумму phi_k для нормализации
-        Z = phi_k.sum(dim=1)  # (B*H, d_h)
+            # Вычисляем кумулятивные суммы по длине для нормализации Z
+            Z_cum = torch.cumsum(phi_k, dim=1)  # (B*H, Nk, d_h)
 
-        # Вычисляем числитель: phi_q @ S  -> (B*H, Nq, d_h)
-        num = torch.einsum('b n d, b d e -> b n e', phi_q, S)
+            # Вычисляем кумулятивные суммы для матрицы памяти S (phi_k^T @ v)
+            # Сначала внешнее произведение: (B*H, Nk, d_h, d_h)
+            outer = phi_k.unsqueeze(-1) * v.unsqueeze(-2)  # (B*H, Nk, d_h, d_h)
+            S_cum = torch.cumsum(outer, dim=1)  # (B*H, Nk, d_h, d_h)
 
-        # Вычисляем знаменатель: phi_q @ Z  -> (B*H, Nq)
-        den = torch.einsum('b n d, b d -> b n', phi_q, Z).unsqueeze(-1)  # (B*H, Nq, 1)
-        den = den.clamp(min=1e-8)
+            # Для каждого запроса используем накопленные суммы до соответствующей позиции
+            # phi_q: (B*H, Nq, d_h), причём в каузальном случае Nq == Nk (обычно)
+            # Вычисляем числитель и знаменатель для всех позиций сразу
+            # einsum('b n d, b n d e -> b n e', phi_q, S_cum) -> (B*H, Nq, d_h)
+            num = torch.einsum('b n d, b n d e -> b n e', phi_q, S_cum)
 
-        # Выход внимания
-        attn_output = num / den  # (B*H, Nq, d_h)
+            # Знаменатель: (B*H, Nq, d_h) * (B*H, Nq, d_h) -> (B*H, Nq)
+            den = torch.einsum('b n d, b n d -> b n', phi_q, Z_cum).unsqueeze(-1)  # (B*H, Nq, 1)
+            den = den.clamp(min=1e-8)
+
+            attn_output = num / den  # (B*H, Nq, d_h)
+
+        else:
+            # Полное (некаузальное) внимание: одна матрица памяти на всю последовательность
+            # S = sum_j phi_k[j]^T v[j]   (B*H, d_h, d_h)
+            S = torch.einsum('b n d, b n e -> b d e', phi_k, v)
+
+            # Z = sum_j phi_k[j]   (B*H, d_h)
+            Z = phi_k.sum(dim=1)  # (B*H, d_h)
+
+            # Числитель: (B*H, Nq, d_h) = phi_q @ S
+            num = torch.einsum('b n d, b d e -> b n e', phi_q, S)
+
+            # Знаменатель: (B*H, Nq, 1) = (phi_q @ Z).unsqueeze(-1)
+            den = torch.einsum('b n d, b d -> b n', phi_q, Z).unsqueeze(-1)
+            den = den.clamp(min=1e-8)
+
+            attn_output = num / den  # (B*H, Nq, d_h)
 
         # Обратное преобразование голов
         attn_output = self._reshape_from_heads(attn_output)  # (B, Nq, D)

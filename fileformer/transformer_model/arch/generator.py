@@ -27,23 +27,16 @@ class DecoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(embedding_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, padding_mask=None, output_attentions=False):
-        if output_attentions:
-            self_attention_out, self_attn_weights = self.self_attention(x, x, x, mask=padding_mask,
-                                                                        output_attentions=True)
-            self_attention_out = self.dropout(self_attention_out)
-        else:
-            self_attention_out = self.self_attention(x, x, x, mask=padding_mask)
-            self_attention_out = self.dropout(self_attention_out)
+    def forward(self, x, padding_mask=None):
+
+        self_attention_out = self.self_attention(x, x, x, mask=padding_mask, causal=True)
+        self_attention_out = self.dropout(self_attention_out)
 
         x = self.norm1(x + self_attention_out)
 
         ff_out = self.mlp(x)
         x = self.norm3(x + self.dropout(ff_out))
 
-        if output_attentions:
-            # Возвращаем dict с weights для self и cross в этом слое
-            return x, {"self_attn": self_attn_weights}
         return x
 
 class Decoder(nn.Module):
@@ -57,10 +50,12 @@ class Decoder(nn.Module):
                  dropout: float,
                  latent_dim: int,
                  activation_type: str = 'relu',
+                 max_seq_len: int = 8192,
                  ):
         super(Decoder, self).__init__()
         self.emb_size = embedding_dim
         self.device = device
+        self.max_seq_len = max_seq_len
         self.chunk_emb = nn.Embedding(vocab_size, embedding_dim)
         self.pe = RotaryPositionalEmbeddings(embedding_dim)
         self.layers = nn.ModuleList(
@@ -79,25 +74,37 @@ class Decoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.final_linear = nn.Linear(embedding_dim, vocab_size)
 
-    def forward(self, x, padding_mask=None, output_attentions=False):
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def create_causal_mask(self, seq_len):
+        """
+        Создает причинную маску для авторегрессии.
+        Возвращает матрицу (seq_len, seq_len) где True означает "не смотреть" (запрещенные позиции).
+        Для стандартного causal внимания: True в верхнем треугольнике (будущие позиции).
+        """
+        mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
+        return mask.to(self.device)
+
+    def forward(self, x, padding_mask=None):
         # x: (bs, seq_len)
         #context: (bs, seq_len, emb_dim)
         N, seqlen = x.shape
         out = self.chunk_emb(x)
-        pos = torch.arange(0, seqlen).expand(N, seqlen).to(self.device)
-        out = self.dropout(
-            (out + self.pe(out))
-        )
-        attentions = []  # Список dict'ов для каждого слоя
+        out = self.pe(out)
+        out = self.dropout(out)
+        combined_mask = padding_mask if padding_mask is not None else None
         for layer in self.layers:
-            if output_attentions:
-                out, layer_attns = layer(out, padding_mask=padding_mask, output_attentions=True)
-                attentions.append(layer_attns)  # [{"self_attn": ..., "cross_attn": ...}, ...]
-            else:
-                out = layer(out, padding_mask=padding_mask)
+            out = layer(out, padding_mask=combined_mask, )
+
 
         final_out = self.final_linear(out)
 
-        if output_attentions:
-            return final_out, attentions
         return final_out
