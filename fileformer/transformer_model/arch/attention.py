@@ -285,13 +285,6 @@ class MultiHeadLatentAttention(nn.Module):
     """
 
     def __init__(self, emb_size: int, num_heads: int, latent_dim: int):
-        """Initialize MultiHeadLatentAttention.
-
-        Args:
-            emb_size (int): Model embedding dimension.
-            num_heads (int): Number of heads (must divide `emb_size`).
-            latent_dim (int): Dimension of the latent space per head (usually << head_dim).
-        """
         super(MultiHeadLatentAttention, self).__init__()
         assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
 
@@ -318,18 +311,20 @@ class MultiHeadLatentAttention(nn.Module):
         x = x.permute(0, 2, 1, 3).contiguous()
         return x.view(batch_size, -1, self.num_heads * self.latent_dim)
 
-    def forward(self, query, key, value, mask=None, output_attentions=False):
-        """Forward pass.
+    def forward(self, query, key, value, mask=None, causal=False):
+        """Forward pass with optional causal masking.
 
         Args:
             query (torch.Tensor): Query (bs, seqlen, emb_size).
             key (torch.Tensor): Key (bs, seqlen, emb_size).
             value (torch.Tensor): Value (bs, seqlen, emb_size).
-            mask (torch.Tensor, optional): Attention mask.
-            output_attentions (bool): If True, also return attention weights.
+            mask (torch.Tensor, optional): Padding mask of shape (bs, seqlen)
+                with 0 for padding positions. Will be broadcasted to the attention scores.
+            causal (bool): If True, applies a causal (triangular) mask to prevent
+                attending to future tokens.
 
         Returns:
-            torch.Tensor or tuple: Output and optional weights.
+            torch.Tensor: Output tensor of shape (bs, seqlen, emb_size).
         """
         bs, seqlen, dim = query.shape
 
@@ -337,14 +332,24 @@ class MultiHeadLatentAttention(nn.Module):
         k = self.K_to_latent(key)
         v = self.V_to_latent(value)
 
-        q = self._reshape_to_heads(q)
+        q = self._reshape_to_heads(q)   # (bs * num_heads, seqlen, latent_dim)
         k = self._reshape_to_heads(k)
         v = self._reshape_to_heads(v)
 
-        attention_scores = torch.einsum('bnd,bmd->bnm', q, k) * self.scale_param
+        attention_scores = torch.einsum('bnd,bmd->bnm', q, k) * self.scale_param  # (bs*num_heads, seqlen, seqlen)
 
+        # Causal mask (upper triangular)
+        if causal:
+            seq_len = attention_scores.shape[-1]
+            causal_mask = torch.triu(
+                torch.ones(seq_len, seq_len, device=attention_scores.device), diagonal=1
+            ).bool()  # (seq_len, seq_len)
+            causal_mask = causal_mask.unsqueeze(0)  # (1, seq_len, seq_len)
+            attention_scores = attention_scores.masked_fill(causal_mask, float('-inf'))
+
+        # Padding mask (if provided)
         if mask is not None:
-            pad_mask = mask.repeat_interleave(self.num_heads, dim=0)
+            pad_mask = mask.repeat_interleave(self.num_heads, dim=0)  # (bs * num_heads, seqlen)
             attention_scores = attention_scores.masked_fill(pad_mask == 0, float('-inf'))
 
         attention_weights = F.softmax(attention_scores, dim=-1)
@@ -353,6 +358,4 @@ class MultiHeadLatentAttention(nn.Module):
         attn_output = self._reshape_from_heads(attn_output)
         attn_output = self.fc_out(attn_output)
 
-        if output_attentions:
-            return attn_output, attention_weights.view(bs, self.num_heads, seqlen, seqlen)
         return attn_output
