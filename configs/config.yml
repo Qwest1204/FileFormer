@@ -9,7 +9,7 @@ decoder:
    max_seq_len: 4096
 
 dataset:
-  file_path: 'enwik8'
+  file_path: '/home/nv/dataset/enwik8'
   seq_len: 4096
   overlap: 256
   cache_dir: 'cache'
