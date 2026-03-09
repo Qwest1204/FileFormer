@@ -1,12 +1,12 @@
 decoder:
    vocab_size: 258
    embedding_dim: 256
-   num_heads: 4
+   latent_dim: 128
+   num_heads: 2
    num_layers: 2
    d_ff: 256
    dropout: 0.1
    activation_type: 'gelu'
-   max_seq_len: 4096
 
 dataset:
   file_path: '/home/nv/dataset/enwik8'

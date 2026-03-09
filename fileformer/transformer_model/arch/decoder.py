@@ -14,12 +14,12 @@ class DecoderLayer(nn.Module):
                  embedding_dim: int,
                  activation_type: str,
                  dropout: float,
+                 latent_dim:int,
                  ):
         super(DecoderLayer, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        self.latent_dim = embedding_dim // 2
-        self.self_attention = MultiHeadLatentAttention(embedding_dim, num_heads, self.latent_dim)
+        self.self_attention = MultiHeadLatentAttention(embedding_dim, num_heads, latent_dim)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
         #define normalization
@@ -46,12 +46,11 @@ class Decoder(nn.Module):
                  num_layers: int,
                  d_ff: int,
                  dropout: float,
+                 latent_dim: int,
                  activation_type: str = 'relu',
-                 max_seq_len: int = 8192,
                  ):
         super(Decoder, self).__init__()
         self.emb_size = embedding_dim
-        self.max_seq_len = max_seq_len
         self.chunk_emb = nn.Embedding(vocab_size, embedding_dim)
         self.pe = RotaryPositionalEmbeddings(embedding_dim)
         self.layers = nn.ModuleList(
@@ -62,6 +61,7 @@ class Decoder(nn.Module):
                     embedding_dim=embedding_dim,
                     dropout=dropout,
                     activation_type=activation_type,
+                    latent_dim=latent_dim,
                 )
                 for _ in range(num_layers)
             ]
