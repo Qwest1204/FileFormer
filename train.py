@@ -109,7 +109,7 @@ def train_epoch(
 
         progress_bar.set_postfix({"loss": f"{avg_loss:.4f}"})
 
-    eval.evaluation(x.to(device), model, padding.to(device))
+    eval.evaluation(model, x.to(device), padding.to(device))
 
     return total_loss / num_batches
 
