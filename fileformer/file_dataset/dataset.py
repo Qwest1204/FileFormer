@@ -108,9 +108,10 @@ class ENWIK8Dataset(Dataset):
            force_rebuild (bool): принудительно пересоздать кэш, даже если он существует.
        """
 
-    def __init__(self, file_path:str, tokenizer:ByteLevelTokenizer, seq_len:int, overlap:int, cache_dir=None, force_rebuild=False):
-        self.tokenizer = tokenizer
+    def __init__(self, file_path:str, seq_len:int, overlap:int, cache_dir=None, force_rebuild=False):
+        self.tokenizer = ByteLevelTokenizer()
         self.seq_len = seq_len
+        self.cache_dir = cache_dir
         self.overlap = overlap
         self.stride = seq_len - overlap
 
@@ -145,6 +146,7 @@ class ENWIK8Dataset(Dataset):
         self.safetensors = safe_open(self.cache_path, framework="pt", device="cpu")
 
     def _build_cache(self, file_path):
+        print(f"building cache of dataset to {self.cache_dir}")
         """Строит кэш: читает файл, токенизирует, создаёт окна и сохраняет их в safetensors."""
         # Чтение всего файла (всё равно необходимо для токенизации)
         with open(file_path, 'rb') as f:

@@ -1,33 +1,27 @@
-encoder:
-  vocab_size: 258
-  embedding_dim: 1024
-  num_heads: 8
-  num_layers: 4
-  hash_len: 64
-  d_ff: 315
-  dropout: 0.1
-  file_type_vocab: 935
-  device: "cpu"
 decoder:
-  vocab_size: 258
-  embedding_dim: 1024
-  num_heads: 16
-  num_layers: 6
-  latent_dim: 40
-  d_ff: 786
-  dropout: 0.1
-  chunk_size: 256
-  device: "cpu"
+   vocab_size: 258
+   embedding_dim: 256
+   num_heads: 4
+   num_layers: 2
+   d_ff: 256
+   dropout: 0.1
+   activation_type: 'gelu'
+   max_seq_len: 4096
+
 dataset:
-  vocab_size: 258
-  seq_len: 256
-  path: "/Users/daniilogorodnikov/dataset/test"
+  file_path: 'enwik8'
+  seq_len: 4096
+  overlap: 256
+  cache_dir: 'cache'
+  force_rebuild: False
+
 train:
   num_epoch: 50
-  interval4save: 200
-  lr: 0.01
-  device: "cpu"
+  lr: 0.0001
+  shuffle: True
   precision: 32
   batch_size: 4
   num_workers: 0
+  pin_memory: True
+  savedir: 'fileformer/transformer_model/weights/'
 

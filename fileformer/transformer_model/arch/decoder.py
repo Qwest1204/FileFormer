@@ -14,12 +14,11 @@ class DecoderLayer(nn.Module):
                  embedding_dim: int,
                  activation_type: str,
                  dropout: float,
-                 latent_dim: int,
                  ):
         super(DecoderLayer, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        self.self_attention = MultiHeadLinearAttention(embedding_dim, num_heads, latent_dim)
+        self.self_attention = MultiHeadLinearAttention(embedding_dim, num_heads)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
         #define normalization
@@ -45,16 +44,13 @@ class Decoder(nn.Module):
                  embedding_dim: int,
                  num_heads: int,
                  num_layers: int,
-                 device: str,
                  d_ff: int,
                  dropout: float,
-                 latent_dim: int,
                  activation_type: str = 'relu',
                  max_seq_len: int = 8192,
                  ):
         super(Decoder, self).__init__()
         self.emb_size = embedding_dim
-        self.device = device
         self.max_seq_len = max_seq_len
         self.chunk_emb = nn.Embedding(vocab_size, embedding_dim)
         self.pe = RotaryPositionalEmbeddings(embedding_dim)
@@ -66,7 +62,6 @@ class Decoder(nn.Module):
                     embedding_dim=embedding_dim,
                     dropout=dropout,
                     activation_type=activation_type,
-                    latent_dim=latent_dim
                 )
                 for _ in range(num_layers)
             ]
@@ -91,7 +86,7 @@ class Decoder(nn.Module):
         Для стандартного causal внимания: True в верхнем треугольнике (будущие позиции).
         """
         mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
-        return mask.to(self.device)
+        return mask
 
     def forward(self, x, padding_mask=None):
         # x: (bs, seq_len)

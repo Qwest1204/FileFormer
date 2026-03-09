@@ -1,44 +1,31 @@
 import torch
-from fileformer import ByteLevelTokenizer
+import torch.nn.functional as F
 
-def evaluate(forward, x):
-    tokens, masked_tokens, pads, hash, extention_tokenize = x
-    tokenizer = ByteLevelTokenizer()
-    # Получаем mask_token и pad_token через tokenizer
-    mask_token = tokenizer.encode("<mask>")[0]
-    pad_token = tokenizer.encode("<pad>")[0]
+def tensor_entropy(tokens):
+    unique, counts = torch.unique(tokens, return_counts=True)
 
+    probs = counts.float() / counts.sum()
+
+    entropy = -torch.sum(probs * torch.log(probs))
+
+    return entropy
+
+def average_output_entropy(model, x, padding_mask=None):
+
+    model.eval()
     with torch.no_grad():
-        decoder_out = forward(masked_tokens, hash, extention_tokenize, pads)
-        # Получаем предсказанные токены
-        predicted_tokens = torch.argmax(decoder_out, dim=2)  # (bs, seq_len)
+        logits = model(x)                     # (bs, seq_len, vocab_size)
+        probs = F.softmax(logits, dim=-1)      # (bs, seq_len, vocab_size)
+        entropy_per_token = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)  # (bs, seq_len)
 
-        # Вывод первых 40 токенов для первого элемента батча
-        print(f"origin tokens : {tokenizer.decode(tokens[0].detach().cpu().tolist()[:40])}")
-        print(f"gen tokens : {tokenizer.decode(predicted_tokens[0].detach().cpu().tolist()[:40])}")
-
-        # Вычисление точности для маскированных токенов
-        mask_positions = masked_tokens == mask_token  # (bs, seq_len)
-        if mask_positions.any():
-            masked_predictions = predicted_tokens[mask_positions]  # Предсказания для <mask>
-            masked_targets = tokens[mask_positions]  # Истинные токены для <mask>
-            masked_correct = (masked_predictions == masked_targets).float().sum()
-            masked_accuracy = (masked_correct / mask_positions.sum()).item() * 100
+        if padding_mask is not None:
+            avg_entropy = (entropy_per_token * padding_mask).sum() / padding_mask.sum()
         else:
-            masked_accuracy = 0.0
-            print("No masked tokens found in the batch.")
+            avg_entropy = entropy_per_token.mean()
 
-        # Вычисление точности для всех токенов (исключая <pad>)
-        non_pad_positions = tokens != pad_token  # (bs, seq_len)
-        if non_pad_positions.any():
-            non_pad_predictions = predicted_tokens[non_pad_positions]
-            non_pad_targets = tokens[non_pad_positions]
-            total_correct = (non_pad_predictions == non_pad_targets).float().sum()
-            total_accuracy = (total_correct / non_pad_positions.sum()).item() * 100
-        else:
-            total_accuracy = 0.0
-            print("No non-pad tokens found in the batch.")
+    return avg_entropy.item()
 
-        # Вывод точности
-        print(f"Masked tokens accuracy: {masked_accuracy:.2f}%")
-        print(f"Total tokens accuracy (excluding padding): {total_accuracy:.2f}%")
+def evaluation(model, x, pads):
+    print(f"Shenon entropy {tensor_entropy(x)}")
+    print(f"Model entropy {average_output_entropy(model, x, pads)}")
+

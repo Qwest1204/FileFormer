@@ -1,34 +1,38 @@
-import lightning as L
-from fileformer import eval, Encoder, Decoder
+from fileformer import eval, Decoder
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
 import torch.optim as optim
 
-class FileFormer(L.LightningModule):
-    def __init__(self, loss_fn, config):
-        #comment
+class FileFormer(nn.Module):
+    def __init__(self, config: dict):
         super().__init__()
-        self.eval = eval
-        self.loss_fn = loss_fn
         self.config = config
-        self.automatic_optimization = True  # Для ручного управления оптимизацией
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=1)
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.create_models()
 
-    def create_models(self):
-        self.encoder = Encoder(**self.config['encoder'])
+    def create_models(self, checkpoint=None):
         self.decoder = Decoder(**self.config['decoder'])
+        if checkpoint:
+            self.decoder.load_state_dict(torch.load(checkpoint, weights_only=True, map_location=self.device))
+
+        return self.decoder
+
 
     def training_step(self, batch, batch_idx):
-        tokens, masked_tokens, pads, hash, extention_tokenize = batch
+        tokens, pads, _ = batch
 
-        if self.training:  # В training не возвращаем attentions, чтобы не тратить память
-            encoder_out = self.encoder(hash, extention_tokenize)
-        else:
-            encoder_out = self.encoder(hash, extention_tokenize, output_attentions=False)  # Или True если нужно
+        tokens = tokens.to(self.device)
+        pads = pads.to(self.device)
 
-        decoder_out = self.decoder(masked_tokens, encoder_out, pads)
+        decoder_out = self.decoder(tokens, pads)
 
         loss = self.loss_fn(
-            decoder_out.view(-1, self.config['encoder']['vocab_size']),
+            decoder_out.view(-1, self.config['decoder']['vocab_size']),
             tokens.view(-1)
         )
 
