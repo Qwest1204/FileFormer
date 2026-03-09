@@ -56,13 +56,6 @@ def create_model(config: dict, device: torch.device) -> tuple[Decoder, torch.opt
     logger.info("init Decoder")
     model = Decoder(**config['decoder']).to(device)
 
-    # Применяем torch.compile, если доступно (PyTorch 2.0+)
-    try:
-        model = torch.compile(model)
-        logger.info("  model compiled with torch.compile")
-    except Exception as e:
-        logger.warning(f"  torch.compile failed, using uncompiled model: {e}")
-
     summary(model, depth=4)
 
     optimizer = torch.optim.AdamW(
