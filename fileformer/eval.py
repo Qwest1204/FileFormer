@@ -14,7 +14,7 @@ def average_output_entropy(model, x, padding_mask=None):
 
     model.eval()
     with torch.no_grad():
-        logits = model(x, padding_mask)                     # (bs, seq_len, vocab_size)
+        logits = model(x, padding_mask.to(torch.bool))                     # (bs, seq_len, vocab_size)
         probs = F.softmax(logits, dim=-1)      # (bs, seq_len, vocab_size)
         entropy_per_token = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)  # (bs, seq_len)
 
