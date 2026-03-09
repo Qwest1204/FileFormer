@@ -12,7 +12,6 @@ def tensor_entropy(tokens):
 
 def average_output_entropy(model, x, padding_mask=None):
 
-    model.eval()
     with torch.no_grad():
         logits = model(x, padding_mask.to(torch.bool))                     # (bs, seq_len, vocab_size)
         probs = F.softmax(logits, dim=-1)      # (bs, seq_len, vocab_size)
