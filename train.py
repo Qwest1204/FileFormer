@@ -55,6 +55,14 @@ def create_model(config: dict, device: torch.device) -> tuple[Decoder, torch.opt
 
     logger.info("init Decoder")
     model = Decoder(**config['decoder']).to(device)
+
+    # Применяем torch.compile, если доступно (PyTorch 2.0+)
+    try:
+        model = torch.compile(model)
+        logger.info("  model compiled with torch.compile")
+    except Exception as e:
+        logger.warning(f"  torch.compile failed, using uncompiled model: {e}")
+
     summary(model, depth=4)
 
     optimizer = torch.optim.AdamW(
@@ -62,13 +70,11 @@ def create_model(config: dict, device: torch.device) -> tuple[Decoder, torch.opt
         lr=config['train']['lr']
     )
 
-    # ID паддинга обычно равен 1 (устанавливается токенизатором)
-    pad_token_id = 1
-    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=pad_token_id)
+    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=1)
 
     logger.info(f"  on device: {device}")
     logger.info(f"  optim: AdamW, lr={config['train']['lr']}")
-    logger.info(f"  loss: CrossEntropyLoss (ignore_index={pad_token_id})")
+    logger.info(f"  loss: CrossEntropyLoss (ignore_index={1})")
 
     return model, optimizer, loss_fn
 
@@ -79,36 +85,53 @@ def train_epoch(
     loss_fn: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
-    epoch: int
+    epoch: int,
+    accumulation_steps: int
 ) -> float:
     model.train()
     total_loss = 0.0
     num_batches = len(dataloader)
 
-    progress_bar = tqdm(dataloader, desc=f"epoche {epoch+1}", leave=False)
-    model.train()
+    progress_bar = tqdm(dataloader, desc=f"epoch {epoch+1}", leave=False)
+
+    optimizer.zero_grad()
+    running_loss = 0.0
+
     for i, batch in enumerate(progress_bar):
         x, padding, _ = batch
 
         input_ids = x[:, :-1].to(device)
         target_ids = x[:, 1:].to(device)
-
         attention_mask = torch.tensor(padding[:, :-1], dtype=torch.bool).to(device)
-
-        optimizer.zero_grad()
 
         logits = model(input_ids, attention_mask)          # (batch, seq_len, vocab_size)
         loss = loss_fn(logits.view(-1, logits.size(-1)), target_ids.reshape(-1))
 
+        # Нормируем loss на количество шагов накопления
+        loss = loss / accumulation_steps
         loss.backward()
+
+        running_loss += loss.item() * accumulation_steps  # восстанавливаем исходное значение loss для статистики
+
+        # Шаг оптимизатора каждые accumulation_steps
+        if (i + 1) % accumulation_steps == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+
+            total_loss += running_loss
+            avg_loss = total_loss / (i + 1)
+
+            progress_bar.set_postfix({"loss": f"{avg_loss:.4f}"})
+            running_loss = 0.0
+
+        # Вызов evaluation после каждого батча (как в исходном коде)
+        eval.evaluation(model, x.to(device), padding.to(device))
+
+    # Если остались ненулевые градиенты (когда число батчей не кратно accumulation_steps)
+    if running_loss != 0.0:
         optimizer.step()
-
-        total_loss += loss.item()
-        avg_loss = total_loss / (i + 1)
-
-        progress_bar.set_postfix({"loss": f"{avg_loss:.4f}"})
-
-    eval.evaluation(model, x.to(device), padding.to(device))
+        optimizer.zero_grad()
+        total_loss += running_loss
 
     return total_loss / num_batches
 
@@ -125,18 +148,22 @@ def train(config: dict) -> None:
     save_dir = Path(config['train']['savedir'])
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    accumulation_steps = config['train']['accumulation_steps']
+    logger.info(f"gradient accumulation steps: {accumulation_steps}")
+
     logger.info(f"start {num_epochs} epochs")
 
     for epoch in range(num_epochs):
-        epoch_loss = train_epoch(model, dataloader, loss_fn, optimizer, device, epoch)
+        epoch_loss = train_epoch(model, dataloader, loss_fn, optimizer, device, epoch, accumulation_steps)
 
-        logger.info(f"ep {epoch+1} complite, avg loss: {epoch_loss:.4f}")
+        logger.info(f"ep {epoch+1} complete, avg loss: {epoch_loss:.4f}")
 
         checkpoint_path = save_dir / f"model-1M_epoch{epoch}.pt"
         torch.save(model.state_dict(), checkpoint_path)
         logger.info(f"  save in {checkpoint_path}")
 
-    logger.info("complite! ")
+    logger.info("complete! ")
+
 
 def main():
     config = load_config('configs/config.yml')
