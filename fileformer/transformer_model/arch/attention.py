@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 
 class SelfAttention(nn.Module):
@@ -279,97 +280,66 @@ class MultiHeadLinearAttention(nn.Module):
 
 
 class MultiHeadLatentAttention(nn.Module):
-    """Multi-head attention with latent (compressed) key/value dimension.
+    def __init__(self, d_model:int, n_heads:int, d_latent=None, dropout=0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.d_head = d_model // n_heads
 
-    Projects queries/keys/values into a smaller latent space per head for efficiency.
-    """
+        # If d_latent not provided, use a smaller dimension
+        self.d_latent = d_latent if d_latent is not None else self.d_head // 2
 
-    def __init__(self, emb_size: int, num_heads: int, latent_dim: int):
-        super(MultiHeadLatentAttention, self).__init__()
-        assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
+        # Latent projection layers
+        self.latent_proj = nn.Linear(self.d_head, self.d_latent)
+        self.latent_proj_back = nn.Linear(self.d_latent, self.d_head)
 
-        self.num_heads = num_heads
-        self.head_dim = emb_size // num_heads
-        self.latent_dim = latent_dim
+        # Q, K, V projections
+        self.q_proj = nn.Linear(d_model, d_model)
+        self.k_proj = nn.Linear(d_model, d_model)
+        self.v_proj = nn.Linear(d_model, d_model)
 
-        self.Q_to_latent = nn.Linear(emb_size, num_heads * latent_dim)
-        self.K_to_latent = nn.Linear(emb_size, num_heads * latent_dim)
-        self.V_to_latent = nn.Linear(emb_size, num_heads * latent_dim)
+        self.out_proj = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(dropout)
 
-        self.fc_out = nn.Linear(num_heads * latent_dim, emb_size)
-        self.scale_param = self.latent_dim ** -0.5
+    def forward(self, q, k, v, mask=None):
+        batch_size, seq_len, d_model = q.size()
 
-    def _reshape_to_heads(self, x):
-        batch_size, seq_len, _ = x.shape
-        x = x.view(batch_size, seq_len, self.num_heads, self.latent_dim)
-        x = x.permute(0, 2, 1, 3).contiguous()
-        return x.view(batch_size * self.num_heads, seq_len, self.latent_dim)
+        # Linear projections
+        Q = self.q_proj(q)  # (B, L, D)
+        K = self.k_proj(k)
+        V = self.v_proj(v)
 
-    def _reshape_from_heads(self, x):
-        batch_size = x.shape[0] // self.num_heads
-        x = x.view(batch_size, self.num_heads, -1, self.latent_dim)
-        x = x.permute(0, 2, 1, 3).contiguous()
-        return x.view(batch_size, -1, self.num_heads * self.latent_dim)
+        # Split into heads
+        Q = Q.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
+        K = K.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
+        V = V.view(batch_size, seq_len, self.n_heads, self.d_head).transpose(1, 2)
 
-    def forward(self, query, key, value, mask=None, causal=False):
-        """Forward pass with improved masking.
+        # Latent bottleneck
+        Q_latent = self.latent_proj(Q)  # (B, H, L, d_latent)
+        K_latent = self.latent_proj(K)
+        V_latent = self.latent_proj(V)
 
-        Args:
-            query: (bs, seqlen_q, emb_size)
-            key:   (bs, seqlen_k, emb_size)
-            value: (bs, seqlen_k, emb_size)
-            mask:  Padding mask of shape (bs, seqlen_k) with 0 for padding positions.
-                   Positions with 0 will be masked out.
-            causal: If True, applies a causal mask where query i cannot attend to key j if j > i.
-                    For correct behaviour, seqlen_q should equal seqlen_k. For decoding with
-                    kv cache, set causal=False and provide an appropriate mask.
+        # Attention scores in latent space
+        scores = torch.matmul(Q_latent, K_latent.transpose(-2, -1))
+        scores = scores / math.sqrt(self.d_latent)
 
-        Returns:
-            torch.Tensor: (bs, seqlen_q, emb_size)
-        """
-        bs, seqlen_q, _ = query.shape
-        _, seqlen_k, _ = key.shape
-
-        # Project to latent space
-        q = self.Q_to_latent(query)  # (bs, seqlen_q, num_heads * latent_dim)
-        k = self.K_to_latent(key)  # (bs, seqlen_k, num_heads * latent_dim)
-        v = self.V_to_latent(value)  # (bs, seqlen_k, num_heads * latent_dim)
-
-        # Reshape to separate heads
-        q = self._reshape_to_heads(q)  # (bs * num_heads, seqlen_q, latent_dim)
-        k = self._reshape_to_heads(k)  # (bs * num_heads, seqlen_k, latent_dim)
-        v = self._reshape_to_heads(v)  # (bs * num_heads, seqlen_k, latent_dim)
-
-        # Compute attention scores
-        attn_scores = torch.einsum('bnd,bmd->bnm', q, k) * self.scale_param
-        # shape: (bs * num_heads, seqlen_q, seqlen_k)
-
-        # --- Causal mask ---
-        if causal:
-            # Build causal mask (True = mask out future positions)
-            causal_mask = torch.triu(
-                torch.ones(seqlen_q, seqlen_k, device=attn_scores.device, dtype=torch.bool),
-                diagonal=1
-            )  # (seqlen_q, seqlen_k)
-            # Expand to all heads and batch
-            causal_mask = causal_mask.unsqueeze(0).expand(bs * self.num_heads, seqlen_q, seqlen_k)
-            attn_scores = attn_scores.masked_fill(causal_mask, float('-inf'))
-
-        # --- Padding mask ---
         if mask is not None:
-            # mask: (bs, seqlen_k) with 0 for padding positions
-            pad_mask = (mask == 0)  # True where padding
-            pad_mask = pad_mask.unsqueeze(1)  # (bs, 1, seqlen_k) – broadcast over seqlen_q
-            # Repeat over heads
-            pad_mask = pad_mask.repeat_interleave(self.num_heads, dim=0)  # (bs*heads, 1, seqlen_k)
-            attn_scores = attn_scores.masked_fill(pad_mask, float('-inf'))
+            scores = scores.masked_fill(mask == 0, float('-inf'))
 
-        # Softmax and output
-        attn_weights = F.softmax(attn_scores, dim=-1)
-        attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
-        attn_output = torch.einsum('bnm,bmd->bnd', attn_weights, v)  # (bs*heads, seqlen_q, latent_dim)
-        # Merge heads and project back
-        attn_output = self._reshape_from_heads(attn_output)  # (bs, seqlen_q, num_heads * latent_dim)
-        attn_output = self.fc_out(attn_output)  # (bs, seqlen_q, emb_size)
+        attn = F.softmax(scores, dim=-1)
+        attn = self.dropout(attn)
 
-        return attn_output
+        # Apply attention to latent V
+        context_latent = torch.matmul(attn, V_latent)  # (B, H, L, d_latent)
+
+        # Project back to original head dimension
+        context = self.latent_proj_back(context_latent)  # (B, H, L, d_head)
+
+        # Concatenate heads
+        context = context.transpose(1, 2).contiguous()
+        context = context.view(batch_size, seq_len, d_model)
+
+        # Final output projection
+        output = self.out_proj(context)
+
+        return output

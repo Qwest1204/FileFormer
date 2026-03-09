@@ -28,8 +28,7 @@ class DecoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, padding_mask=None):
-
-        self_attention_out = self.self_attention(x, x, x, mask=padding_mask, causal=True)
+        self_attention_out = self.self_attention(x, x, x, mask=padding_mask)
         self_attention_out = self.dropout(self_attention_out)
 
         x = self.norm1(x + self_attention_out)
@@ -91,14 +90,22 @@ class Decoder(nn.Module):
 
     def forward(self, x, padding_mask=None):
         # x: (bs, seq_len)
-        #context: (bs, seq_len, emb_dim)
-        N, seqlen = x.shape
+        N, seq_len = x.shape
+        device = x.device
+
+        causal = torch.tril(torch.ones(seq_len, seq_len, device=device))
+        causal = causal.view(1, 1, seq_len, seq_len)  # [B=1,H=1,L,L]
+
+        pad = padding_mask.unsqueeze(1).unsqueeze(1)  # [B,1,1,L]
+        pad = pad.expand(-1, -1, seq_len, -1)  # [B,1,L,L]
+
+        combined = causal * (~pad)
+
         out = self.chunk_emb(x)
         out = self.pe(out)
         out = self.dropout(out)
-        combined_mask = padding_mask if padding_mask is not None else None
         for layer in self.layers:
-            out = layer(out, padding_mask=combined_mask, )
+            out = layer(out, padding_mask=combined, )
 
 
         final_out = self.final_linear(out)
