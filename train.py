@@ -149,7 +149,7 @@ def train(config: dict) -> None:
 
         logger.info(f"ep {epoch+1} complete, avg loss: {epoch_loss:.4f}")
 
-        checkpoint_path = save_dir / f"model-1M-latent_epoch{epoch}.pt"
+        checkpoint_path = save_dir / f"{config['train']['model_name_prefix']}_epoch{epoch}.pt"
         torch.save(model.state_dict(), checkpoint_path)
         logger.info(f"  save in {checkpoint_path}")
 
