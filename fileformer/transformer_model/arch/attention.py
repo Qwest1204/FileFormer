@@ -312,19 +312,17 @@ class MultiHeadLatentAttention(nn.Module):
         return x.view(batch_size, -1, self.num_heads * self.latent_dim)
 
     def forward(self, query, key, value, mask=None, causal=False):
-        """Forward pass with optional causal and padding masks.
+        """Forward pass with improved masking.
 
         Args:
-            query (torch.Tensor): (bs, seqlen_q, emb_size)
-            key (torch.Tensor):   (bs, seqlen_k, emb_size)
-            value (torch.Tensor): (bs, seqlen_k, emb_size)
-            mask (torch.Tensor, optional): Padding mask for keys, shape (bs, seqlen_k).
-                                            Positions with 0 are masked.
-            causal (bool): If True, applies a causal mask where query position i
-                           cannot attend to key positions j > i. Assumes queries and keys
-                           are aligned (i.e., seqlen_q == seqlen_k or queries correspond
-                           to the last seqlen_q positions of the keys). For non-aligned
-                           cases, you may need to provide a custom mask.
+            query: (bs, seqlen_q, emb_size)
+            key:   (bs, seqlen_k, emb_size)
+            value: (bs, seqlen_k, emb_size)
+            mask:  Padding mask of shape (bs, seqlen_k) with 0 for padding positions.
+                   Positions with 0 will be masked out.
+            causal: If True, applies a causal mask where query i cannot attend to key j if j > i.
+                    For correct behaviour, seqlen_q should equal seqlen_k. For decoding with
+                    kv cache, set causal=False and provide an appropriate mask.
 
         Returns:
             torch.Tensor: (bs, seqlen_q, emb_size)
@@ -337,37 +335,39 @@ class MultiHeadLatentAttention(nn.Module):
         k = self.K_to_latent(key)  # (bs, seqlen_k, num_heads * latent_dim)
         v = self.V_to_latent(value)  # (bs, seqlen_k, num_heads * latent_dim)
 
-        # Reshape to separate heads: (bs * num_heads, seqlen, latent_dim)
-        q = self._reshape_to_heads(q)
-        k = self._reshape_to_heads(k)
-        v = self._reshape_to_heads(v)
+        # Reshape to separate heads
+        q = self._reshape_to_heads(q)  # (bs * num_heads, seqlen_q, latent_dim)
+        k = self._reshape_to_heads(k)  # (bs * num_heads, seqlen_k, latent_dim)
+        v = self._reshape_to_heads(v)  # (bs * num_heads, seqlen_k, latent_dim)
 
         # Compute attention scores
-        attention_scores = torch.einsum('bnd,bmd->bnm', q, k) * self.scale_param
+        attn_scores = torch.einsum('bnd,bmd->bnm', q, k) * self.scale_param
         # shape: (bs * num_heads, seqlen_q, seqlen_k)
 
         # --- Causal mask ---
         if causal:
-            # Build a causal mask of shape (seqlen_q, seqlen_k)
-            # True means "mask out" (future positions)
+            # Build causal mask (True = mask out future positions)
             causal_mask = torch.triu(
-                torch.ones(seqlen_q, seqlen_k, device=attention_scores.device), diagonal=1
-            ).bool()  # (seqlen_q, seqlen_k)
-            causal_mask = causal_mask.unsqueeze(0)  # (1, seqlen_q, seqlen_k)
-            attention_scores = attention_scores.masked_fill(causal_mask, float('-inf'))
+                torch.ones(seqlen_q, seqlen_k, device=attn_scores.device, dtype=torch.bool),
+                diagonal=1
+            )  # (seqlen_q, seqlen_k)
+            # Expand to all heads and batch
+            causal_mask = causal_mask.unsqueeze(0).expand(bs * self.num_heads, seqlen_q, seqlen_k)
+            attn_scores = attn_scores.masked_fill(causal_mask, float('-inf'))
 
-        # --- Padding mask (for keys) ---
+        # --- Padding mask ---
         if mask is not None:
             # mask: (bs, seqlen_k) with 0 for padding positions
-            mask = mask.unsqueeze(1)  # (bs, 1, seqlen_k) – broadcast over seqlen_q
-            # Repeat over heads: (bs * num_heads, 1, seqlen_k)
-            mask = mask.repeat_interleave(self.num_heads, dim=0)
-            attention_scores = attention_scores.masked_fill(mask == 0, float('-inf'))
+            pad_mask = (mask == 0)  # True where padding
+            pad_mask = pad_mask.unsqueeze(1)  # (bs, 1, seqlen_k) – broadcast over seqlen_q
+            # Repeat over heads
+            pad_mask = pad_mask.repeat_interleave(self.num_heads, dim=0)  # (bs*heads, 1, seqlen_k)
+            attn_scores = attn_scores.masked_fill(pad_mask, float('-inf'))
 
         # Softmax and output
-        attention_weights = F.softmax(attention_scores, dim=-1)
-        attn_output = torch.einsum('bnm,bmd->bnd', attention_weights, v)  # (bs*num_heads, seqlen_q, latent_dim)
-
+        attn_weights = F.softmax(attn_scores, dim=-1)
+        attn_weights = torch.nan_to_num(attn_weights, nan=0.0)
+        attn_output = torch.einsum('bnm,bmd->bnd', attn_weights, v)  # (bs*heads, seqlen_q, latent_dim)
         # Merge heads and project back
         attn_output = self._reshape_from_heads(attn_output)  # (bs, seqlen_q, num_heads * latent_dim)
         attn_output = self.fc_out(attn_output)  # (bs, seqlen_q, emb_size)
