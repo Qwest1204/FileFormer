@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from fileformer.transformer_model.arch.attention import MultiHeadAttention, MultiHeadLatentAttention, MultiHeadLinearAttention
+from fileformer.transformer_model.arch.attention import MultiHeadLatentAttention
 from fileformer.transformer_model.arch.pe import RotaryPositionalEmbeddings
 from fileformer.transformer_model.arch.mlp import MLP
 import torch.nn.functional as F
@@ -18,7 +18,8 @@ class DecoderLayer(nn.Module):
         super(DecoderLayer, self).__init__()
         # define attention
         self.head_dim = embedding_dim // num_heads
-        self.self_attention = MultiHeadLinearAttention(embedding_dim, num_heads)
+        self.latent_dim = embedding_dim // 2
+        self.self_attention = MultiHeadLatentAttention(embedding_dim, num_heads, self.latent_dim)
         #define mpl
         self.mlp = MLP(embedding_dim, dim_ff, activation_type, dropout)
         #define normalization
