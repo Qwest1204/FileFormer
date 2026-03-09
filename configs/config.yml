@@ -18,7 +18,7 @@ dataset:
 train:
   num_epoch: 50
   accumulation_steps: 32
-  lr: 0.0001
+  lr: 0.001
   shuffle: True
   precision: 32
   batch_size: 4
