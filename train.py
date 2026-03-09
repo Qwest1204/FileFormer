@@ -117,9 +117,7 @@ def train_epoch(
             progress_bar.set_postfix({"loss": f"{avg_loss:.4f}"})
             running_loss = 0.0
 
-        # Вызов evaluation после каждого батча (как в исходном коде)
-        eval.evaluation(model, x.to(device), padding.to(device))
-
+    eval.evaluation(model, x.to(device), padding.to(device))
     # Если остались ненулевые градиенты (когда число батчей не кратно accumulation_steps)
     if running_loss != 0.0:
         optimizer.step()

@@ -18,12 +18,8 @@ def average_output_entropy(model, x, padding_mask=None):
         probs = F.softmax(logits, dim=-1)      # (bs, seq_len, vocab_size)
         entropy_per_token = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1)  # (bs, seq_len)
 
-        if padding_mask is not None:
-            avg_entropy = (entropy_per_token * padding_mask).sum() / padding_mask.sum()
-        else:
-            avg_entropy = entropy_per_token.mean()
-
-    return avg_entropy.item()
+        avg_entropy = entropy_per_token.mean()
+        return avg_entropy
 
 def evaluation(model, x, pads):
     print(f"Shenon entropy {tensor_entropy(x)}")
