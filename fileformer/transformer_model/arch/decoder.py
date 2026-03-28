@@ -96,6 +96,9 @@ class Decoder(nn.Module):
         causal = torch.tril(torch.ones(seq_len, seq_len, device=device))
         causal = causal.view(1, 1, seq_len, seq_len)  # [B=1,H=1,L,L]
 
+        if padding_mask is None:
+            padding_mask = torch.zeros(N, seq_len, seq_len, dtype=torch.bool, device=device)
+
         pad = padding_mask.unsqueeze(1).unsqueeze(1)  # [B,1,1,L]
         pad = pad.expand(-1, -1, seq_len, -1)  # [B,1,L,L]
 
