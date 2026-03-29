@@ -27,7 +27,7 @@ class FileFormerBlock(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
-        attention_output = self.ln1(x + self.dropout(self.mha(x, x, x, mask, is_causal=True)))
+        attention_output = self.ln1(x + self.dropout(self.mha(x, mask, is_causal=True)))
         # Apply feed-forward network and add the residual connection, followed by layer normalization
         x = x + self.dropout(self.mha(self.ln1(x), mask))
         x = x + self.dropout(self.ff(self.ln2(x)))

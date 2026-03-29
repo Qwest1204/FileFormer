@@ -83,7 +83,7 @@ class MultiHeadAttention(nn.Module):
         self.fc_out = nn.Linear(emb_size, emb_size)
         self.scale_param = self.head_dim ** -0.5
 
-    def forward(self, q, k, v, mask=None, is_causal=False):
+    def forward(self,x, mask=None, is_causal=False):
         """Forward pass.
 
         Args:
@@ -95,12 +95,12 @@ class MultiHeadAttention(nn.Module):
         Returns:
             torch.Tensor or tuple: Output (bs, seq_len_q, emb_size) and optional weights.
         """
-        bs, seqlen_q, dim = q.shape
-        _, seqlen_kv, _ = k.shape
+        bs, seqlen_q, dim = x.shape
+        _, seqlen_kv, _ = x.shape
 
-        Q = self.Q_layer(q)  # (bs, seqlen_q, dim)
-        K = self.K_layer(k)  # (bs, seqlen_kv, dim)
-        V = self.V_layer(v)  # (bs, seqlen_kv, dim)
+        Q = self.Q_layer(x)  # (bs, seqlen_q, dim)
+        K = self.K_layer(x)  # (bs, seqlen_kv, dim)
+        V = self.V_layer(x)  # (bs, seqlen_kv, dim)
 
         # Reshape Q, K, V to (bs, num_heads, seq_len, head_dim)
         Q = Q.view(bs, seqlen_q, self.num_heads, self.head_dim).transpose(1, 2)  # (bs, num_heads, seqlen_q, head_dim)
