@@ -62,13 +62,12 @@ class MultiHeadAttention(nn.Module):
     Supports cross-attention (different seq lengths for Q vs K/V) and optional attention weight return.
     """
 
-    def __init__(self, emb_size: int, num_heads: int, latent_dim: int):
+    def __init__(self, emb_size: int, num_heads: int, qkv_bias: bool):
         """Initialize MultiHeadAttention.
 
         Args:
             emb_size (int): Model embedding dimension.
             num_heads (int): Number of attention heads (must divide `emb_size`).
-            latent_dim (int): Unused legacy parameter (kept for API compatibility).
         """
         super(MultiHeadAttention, self).__init__()
         assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
@@ -77,14 +76,14 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = emb_size // num_heads
         self.emb_size = emb_size
 
-        self.Q_layer = nn.Linear(emb_size, emb_size)
-        self.K_layer = nn.Linear(emb_size, emb_size)
-        self.V_layer = nn.Linear(emb_size, emb_size)
+        self.Q_layer = nn.Linear(emb_size, emb_size, bias=qkv_bias)
+        self.K_layer = nn.Linear(emb_size, emb_size, bias=qkv_bias)
+        self.V_layer = nn.Linear(emb_size, emb_size, bias=qkv_bias)
 
         self.fc_out = nn.Linear(emb_size, emb_size)
         self.scale_param = self.head_dim ** -0.5
 
-    def forward(self, q, k, v, mask=None, output_attentions=False):
+    def forward(self, q, k, v, mask=None, is_causal=False):
         """Forward pass.
 
         Args:
@@ -92,7 +91,6 @@ class MultiHeadAttention(nn.Module):
             k (torch.Tensor): Key (bs, seq_len_kv, emb_size).
             v (torch.Tensor): Value (bs, seq_len_kv, emb_size).
             mask (torch.Tensor, optional): Attention mask.
-            output_attentions (bool): If True, also return attention weights.
 
         Returns:
             torch.Tensor or tuple: Output (bs, seq_len_q, emb_size) and optional weights.
@@ -109,21 +107,19 @@ class MultiHeadAttention(nn.Module):
         K = K.view(bs, seqlen_kv, self.num_heads, self.head_dim).transpose(1, 2)  # (bs, num_heads, seqlen_kv, head_dim)
         V = V.view(bs, seqlen_kv, self.num_heads, self.head_dim).transpose(1, 2)  # (bs, num_heads, seqlen_kv, head_dim)
 
-        attention_scores = torch.matmul(Q, K.transpose(-1, -2)) * self.scale_param
+        scores = torch.matmul(Q, K.transpose(-1, -2)) * self.scale_param
+
+        if is_causal:
+            causal_mask = torch.triu(torch.ones(seqlen_q, seqlen_kv, dtype=torch.bool, device=scores.device), diagonal=1)
+            scores = scores.masked_fill(causal_mask, float('-inf'))
 
         if mask is not None:
-            # Ensure mask is compatible with attention_scores
-            if mask.dim() == 3:  # Assume mask is (bs, seqlen_q, seqlen_kv)
-                mask = mask.unsqueeze(1).repeat(1, self.num_heads, 1, 1)  # (bs, num_heads, seqlen_q, seqlen_kv)
-            attention_scores = attention_scores.masked_fill(mask == 0, float('-inf'))
+            scores = scores.masked_fill(mask[:, None, None, :], float('-inf'))
 
-        attention_weights = F.softmax(attention_scores, dim=-1)
+        attention_weights = F.softmax(scores, dim=-1)
 
         output = torch.matmul(attention_weights, V).transpose(1, 2).contiguous().view(bs, seqlen_q, dim)
         output = self.fc_out(output)
-
-        if output_attentions:
-            return output, attention_weights
         return output
 
 

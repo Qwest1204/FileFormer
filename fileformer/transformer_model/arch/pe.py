@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch
-
+import numpy as np
 
 class RotaryPositionalEmbeddings(nn.Module):
     def __init__(self, d: int, base: int = 10_000):
@@ -36,3 +36,29 @@ class RotaryPositionalEmbeddings(nn.Module):
         neg_half_x = self._neg_half(x)
         x_rope = (x * cos_vals) + (neg_half_x * sin_vals)
         return x_rope
+
+class LearnablePositionalEmbeddings(nn.Module):
+    def __init__(self, dim: int, max_seq_len: int = 10_000):
+        super().__init__()
+        self.pe = nn.Embedding(max_seq_len, dim)
+
+    def forward(self, x: torch.Tensor):
+        pos = torch.arange(x.shape[1], device=x.device).expand(x.size(0), -1)
+        pos_emb = self.pe(pos)
+        return x + pos_emb
+
+class SinusoidalPositionalEmbeddings(nn.Module):
+    def __init__(self, dim: int, max_seq_len: int = 2048, base: int = 10_000):
+        super().__init__()
+        i = torch.arange(0, dim // 2)
+        div_term = torch.exp(-np.log(base) * (2 * i / dim))
+        position = torch.arange(max_seq_len).unsqueeze(1)
+
+        pe = torch.zeros(max_seq_len, dim)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: torch.Tensor):
+        return x + self.pe[:, :x.size(1), :]
