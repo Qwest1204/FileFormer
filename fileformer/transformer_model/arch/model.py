@@ -19,16 +19,16 @@ class FileFormerBlock(nn.Module):
                  dim_ff: int,
                  dropout: float,
                  qkv_bias: bool,
-                 latent_dim: int,):
+                 ):
         super(FileFormerBlock, self).__init__()
-        self.mha = attention.MultiHeadLatentAttention(dim, num_heads, latent_dim, qkv_bias)
+        self.mha = attention.MultiHeadAttention(dim, num_heads, qkv_bias)
         self.ff = FeedForward(dim, dim_ff)
         self.ln1 = nn.LayerNorm(dim)
         self.ln2 = nn.LayerNorm(dim)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, mask=None):
-        attention_output = self.ln1(x + self.dropout(self.mha(x, mask)))
+        attention_output = self.ln1(x + self.dropout(self.mha(x,x,x, mask)))
         # Apply feed-forward network and add the residual connection, followed by layer normalization
         x = x + self.dropout(self.mha(self.ln1(x), mask))
         x = x + self.dropout(self.ff(self.ln2(x)))
@@ -36,7 +36,7 @@ class FileFormerBlock(nn.Module):
 
 
 class FileFormer(nn.Module):
-    def __init__(self, vocab_size, embed_size, max_seq_len, n_heads, n_layers, drop_rate, latent_dim):
+    def __init__(self, vocab_size, embed_size, max_seq_len, n_heads, n_layers, drop_rate):
         super().__init__()
 
         self.embedding = nn.Embedding(vocab_size, embed_size)
@@ -46,7 +46,7 @@ class FileFormer(nn.Module):
         # Create a list of transformer blocks
         self.transformer_blocks = nn.ModuleList([
             # Each transformer block consists of multi-head attention and feed-forward layers
-            FileFormerBlock(embed_size, n_heads, embed_size * 4, drop_rate, False, latent_dim)
+            FileFormerBlock(embed_size, n_heads, embed_size * 4, drop_rate, False)
             for _ in range(n_layers)  # Repeat for the number of layers specified in the config
         ])
 
