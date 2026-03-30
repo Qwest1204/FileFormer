@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import math
 
 class SelfAttention(nn.Module):
     """Single-head scaled dot-product self-attention.
@@ -275,91 +275,67 @@ class MultiHeadLinearAttention(nn.Module):
 
 
 class MultiHeadLatentAttention(nn.Module):
-    """Multi-head attention with latent (compressed) key/value dimension.
-
-    Projects queries/keys/values into a smaller latent space per head for efficiency.
-    Supports causal masking and optional padding masks.
+    """
+    Латентное внимание (Latent Attention) - механизм внимания,
+    который проецирует запросы и ключи в латентное пространство меньшей размерности
+    перед вычислением внимания.
     """
 
-    def __init__(self, emb_size: int, num_heads: int, latent_dim: int, qkv_bias: bool):
+    def __init__(self, d_model, num_heads, latent_dim=None, qkv_bias=False):
         super(MultiHeadLatentAttention, self).__init__()
-        assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
 
+        self.d_model = d_model
         self.num_heads = num_heads
-        self.head_dim = emb_size // num_heads
-        self.latent_dim = latent_dim
+        self.d_k = d_model // num_heads
+        self.latent_dim = latent_dim or d_model // 2
 
-        self.Q_to_latent = nn.Linear(emb_size, num_heads * latent_dim, bias=qkv_bias)
-        self.K_to_latent = nn.Linear(emb_size, num_heads * latent_dim, bias=qkv_bias)
-        self.V_to_latent = nn.Linear(emb_size, num_heads * latent_dim, bias=qkv_bias)
+        # Проекции для Q, K, V
+        self.W_q = nn.Linear(d_model, d_model, bias=qkv_bias)
+        self.W_k = nn.Linear(d_model, d_model, bias=qkv_bias)
+        self.W_v = nn.Linear(d_model, d_model, bias=qkv_bias)
 
-        self.fc_out = nn.Linear(num_heads * latent_dim, emb_size)
-        self.scale_param = self.latent_dim ** -0.5
+        # Проекции в латентное пространство
+        self.latent_q = nn.Linear(d_model, self.latent_dim * num_heads)
+        self.latent_k = nn.Linear(d_model, self.latent_dim * num_heads)
 
-    def _reshape_to_heads(self, x):
-        batch_size, seq_len, _ = x.shape
-        x = x.view(batch_size, seq_len, self.num_heads, self.latent_dim)
-        x = x.permute(0, 2, 1, 3).contiguous()
-        return x.view(batch_size * self.num_heads, seq_len, self.latent_dim)
+        # Выходная проекция
+        self.W_o = nn.Linear(d_model, d_model)
 
-    def _reshape_from_heads(self, x):
-        batch_size = x.shape[0] // self.num_heads
-        x = x.view(batch_size, self.num_heads, -1, self.latent_dim)
-        x = x.permute(0, 2, 1, 3).contiguous()
-        return x.view(batch_size, -1, self.num_heads * self.latent_dim)
+        self.scale = math.sqrt(self.latent_dim)
 
-    def forward(self, x, mask=None, is_causal=False):
-        """Forward pass with optional causal and padding masking.
+    def forward(self, x, mask=None):
+        batch_size = x.size(0)
 
-        Args:
-            query (torch.Tensor): Query (bs, seqlen_q, emb_size).
-            key (torch.Tensor): Key (bs, seqlen_kv, emb_size).
-            value (torch.Tensor): Value (bs, seqlen_kv, emb_size).
-            mask (torch.Tensor, optional): Padding mask for key positions of shape
-                (bs, seqlen_kv) with 0 for padding. Will be broadcasted to attention scores.
-            is_causal (bool): If True, applies a causal (triangular) mask to prevent
-                attending to future tokens (assumes seqlen_q == seqlen_kv).
+        # Линейные проекции
+        Q = self.W_q(x)  # (batch_size, seq_len_q, d_model)
+        K = self.W_k(x)  # (batch_size, seq_len_k, d_model)
+        V = self.W_v(x)  # (batch_size, seq_len_v, d_model)
 
-        Returns:
-            torch.Tensor: Output tensor of shape (bs, seqlen_q, emb_size).
-        """
-        bs, seqlen_q, _ = x.shape
+        # Проекция в латентное пространство
+        Q_latent = self.latent_q(Q)  # (batch_size, seq_len_q, latent_dim * num_heads)
+        K_latent = self.latent_k(K)  # (batch_size, seq_len_k, latent_dim * num_heads)
 
-        q = self.Q_to_latent(x)       # (bs, seqlen_q, num_heads * latent_dim)
-        k = self.K_to_latent(x)         # (bs, seqlen_kv, num_heads * latent_dim)
-        v = self.V_to_latent(x)       # (bs, seqlen_kv, num_heads * latent_dim)
+        # Переформатирование для multi-head
+        Q_latent = Q_latent.view(batch_size, -1, self.num_heads, self.latent_dim).transpose(1, 2)
+        K_latent = K_latent.view(batch_size, -1, self.num_heads, self.latent_dim).transpose(1, 2)
+        V = V.view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
 
-        q = self._reshape_to_heads(q)     # (bs * num_heads, seqlen_q, latent_dim)
-        k = self._reshape_to_heads(k)     # (bs * num_heads, seqlen_kv, latent_dim)
-        v = self._reshape_to_heads(v)     # (bs * num_heads, seqlen_kv, latent_dim)
+        # Вычисление внимания в латентном пространстве
+        scores = torch.matmul(Q_latent, K_latent.transpose(-2, -1)) / self.scale
 
-        # Compute attention scores: (bs*num_heads, seqlen_q, seqlen_kv)
-        attention_scores = torch.einsum('bnd,bmd->bnm', q, k) * self.scale_param
-
-        # Causal mask (if requested)
-        if is_causal:
-            seq_len_q = attention_scores.shape[-2]
-            seq_len_k = attention_scores.shape[-1]
-            # Create a triangular mask: True for positions to be masked (future)
-            causal_mask = torch.triu(
-                torch.ones(seq_len_q, seq_len_k, dtype=torch.bool, device=attention_scores.device),
-                diagonal=1
-            )  # (seq_len_q, seq_len_k)
-            causal_mask = causal_mask.unsqueeze(0)  # (1, seq_len_q, seq_len_k)
-            attention_scores = attention_scores.masked_fill(causal_mask, float('-inf'))
-
-        # Padding mask (if provided)
         if mask is not None:
-            # mask is (bs, seqlen_kv) with 0 for padding positions
-            pad_mask = mask.repeat_interleave(self.num_heads, dim=0)  # (bs*num_heads, seqlen_kv)
-            pad_mask = pad_mask.unsqueeze(1)
-            # Broadcasting over query dimension: mask out key positions that are padding
-            attention_scores = attention_scores.masked_fill(pad_mask, float('-inf'))
+            scores = scores.masked_fill(mask == 0, float('-inf'))
 
-        attention_weights = F.softmax(attention_scores, dim=-1)
-        attn_output = torch.einsum('bnm,bmd->bnd', attention_weights, v)
+        attention_weights = F.softmax(scores, dim=-1)
 
-        attn_output = self._reshape_from_heads(attn_output)  # (bs, seqlen_q, num_heads * latent_dim)
-        attn_output = self.fc_out(attn_output)               # (bs, seqlen_q, emb_size)
+        # Применение внимания к значениям
+        context = torch.matmul(attention_weights, V)  # (batch_size, num_heads, seq_len_q, d_k)
 
-        return attn_output
+        # Объединение heads
+        context = context.transpose(1, 2).contiguous()
+        context = context.view(batch_size, -1, self.d_model)
+
+        # Финальная проекция
+        output = self.W_o(context)
+
+        return output
