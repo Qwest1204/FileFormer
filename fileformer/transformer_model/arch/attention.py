@@ -63,23 +63,13 @@ class MultiHeadAttention(nn.Module):
         num_heads: int,
         qkv_bias: bool = False,
         dropout: float = 0.0,
-        return_weights: bool = False,
     ):
-        """
-        Args:
-            emb_size: Размер эмбеддинга (должен делиться на num_heads).
-            num_heads: Количество голов внимания.
-            qkv_bias: Добавлять ли bias в линейные слои для Q, K, V.
-            dropout: Вероятность dropout после softmax.
-            return_weights: Возвращать ли веса внимания (внимание: замедляет обучение).
-        """
         super().__init__()
         assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
 
         self.emb_size = emb_size
         self.num_heads = num_heads
         self.head_dim = emb_size // num_heads
-        self.return_weights = return_weights
         self.dropout = dropout
 
         self.q_proj = nn.Linear(emb_size, emb_size, bias=qkv_bias)
@@ -94,18 +84,17 @@ class MultiHeadAttention(nn.Module):
         value: torch.Tensor = None,
         mask: torch.Tensor = None,
         is_causal: bool = True,
-    ) -> torch.Tensor:
-        """Forward pass.
-
+    ):
+        """
         Args:
             query: (batch, seq_len_q, emb_size)
             key:   (batch, seq_len_kv, emb_size). Если None, используется query.
             value: (batch, seq_len_kv, emb_size). Если None, используется key.
-            mask:  Маска внимания. Может быть:
-                   - 2D: (batch, seq_len_kv) или (seq_len_q, seq_len_kv)
-                   - 4D: (batch, num_heads, seq_len_q, seq_len_kv)
-                   Значение True в маске означает *игнорировать* (будет замаскировано -inf).
-            is_causal: Флаг причинной маски (только для self-attention, seq_len_q == seq_len_kv).
+            mask:  Булева маска (True = игнорировать). Может быть:
+                   - (batch, seq_len_kv)
+                   - (batch, seq_len_q, seq_len_kv)
+                   - (batch, num_heads, seq_len_q, seq_len_kv)
+            is_causal: Флаг причинной маски (только для self-attention, когда q_len == kv_len).
 
         Returns:
             out: (batch, seq_len_q, emb_size)
@@ -120,25 +109,54 @@ class MultiHeadAttention(nn.Module):
         kv_len = key.shape[1]
 
         # Проекции
-        Q = self.q_proj(query)  # (bs, q_len, emb_size)
-        K = self.k_proj(key)    # (bs, kv_len, emb_size)
-        V = self.v_proj(value)  # (bs, kv_len, emb_size)
+        Q = self.q_proj(query)
+        K = self.k_proj(key)
+        V = self.v_proj(value)
 
         # Разделение на головы
-        Q = Q.view(bs, q_len, self.num_heads, self.head_dim).transpose(1, 2)
+        Q = Q.view(bs, q_len, self.num_heads, self.head_dim).transpose(1, 2)  # (bs, num_heads, q_len, head_dim)
         K = K.view(bs, kv_len, self.num_heads, self.head_dim).transpose(1, 2)
         V = V.view(bs, kv_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Преобразование маски в формат, понятный scaled_dot_product_attention
-        # SDPA ожидает маску в виде (batch, seq_len_q, seq_len_kv) или (batch, num_heads, seq_len_q, seq_len_kv)
+        # Если нужны веса – используем ручной расчёт (медленнее, но даёт веса)
+        # --- Используем SDPA (оптимизированный, с FlashAttention если доступно) ---
+        # Подготовка маски для SDPA: маска должна быть булевой (True = attend) или числовой
         attn_mask = None
-        if mask is not None:
-            # Если маска передана как bool (True = ignore), инвертируем для SDPA (True = attend)
-            if mask.dtype == torch.bool:
-                attn_mask = ~mask  # SDPA: True означает, что элемент участвует в вычислениях
-            else:
-                attn_mask = mask
+        if is_causal and mask is not None:
+            # Объединяем каузальную маску с маской паддингов
+            # Создаём каузальную маску (True = игнорировать)
+            causal = torch.triu(
+                torch.ones(q_len, kv_len, dtype=torch.bool, device=Q.device), diagonal=1
+            )  # (q_len, kv_len)
+            causal = causal[None, None, :, :]  # (1, 1, q_len, kv_len)
 
+            # Приводим переданную маску к булевому формату (True = игнорировать)
+            if mask.dtype != torch.bool:
+                # Если маска числовая, конвертируем: 0 -> attend, ненулевое -> ignore
+                mask = mask != 0
+            # Расширяем размерности маски до (batch, 1, q_len, kv_len) для broadcast
+            if mask.dim() == 2:  # (bs, kv_len)
+                mask = mask[:, None, None, :]  # (bs, 1, 1, kv_len)
+            elif mask.dim() == 3:  # (bs, q_len, kv_len)
+                mask = mask[:, None, :, :]    # (bs, 1, q_len, kv_len)
+            # Объединяем: игнорировать, если хотя бы одна маска True
+            combined_mask = causal | mask  # broadcast: (1,1,q_len,kv_len) + (bs,1,q_len,kv_len) -> (bs,1,q_len,kv_len)
+            # Для SDPA нужна маска, где True = attend, поэтому инвертируем
+            attn_mask = ~combined_mask
+            is_causal = False  # явная маска передаётся
+        elif is_causal:
+            # Только причинность, паддингов нет
+            attn_mask = None
+            # is_causal остаётся True
+        else:
+            # Только паддинги (без причинности)
+            if mask is not None:
+                if mask.dtype == torch.bool:
+                    attn_mask = ~mask  # инвертируем (True=attend)
+                else:
+                    # Если маска числовая, используем как есть (будет добавлена к scores)
+                    attn_mask = mask
+            # is_causal уже False
 
         out = F.scaled_dot_product_attention(
             Q, K, V,
@@ -146,7 +164,6 @@ class MultiHeadAttention(nn.Module):
             dropout_p=self.dropout if self.training else 0.0,
             is_causal=is_causal,
         )
-        # out shape: (bs, num_heads, q_len, head_dim)
         out = out.transpose(1, 2).contiguous().view(bs, q_len, self.emb_size)
         out = self.out_proj(out)
         return out
