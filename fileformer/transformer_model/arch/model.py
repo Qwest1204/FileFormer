@@ -34,12 +34,12 @@ class FileFormerBlock(nn.Module):
 
 
 class FileFormer(nn.Module):
-    def __init__(self, vocab_size, embed_size, max_seq_len, n_heads, n_layers, drop_rate):
+    def __init__(self, vocab_size, embed_size, n_heads, n_layers, drop_rate):
         super().__init__()
 
         self.embedding = nn.Embedding(vocab_size, embed_size)
 
-        self.positional_encoding = pe.LearnablePositionalEmbeddings(embed_size, max_seq_len)
+        self.positional_encoding = pe.RotaryPositionalEmbeddings(embed_size)
 
         # Create a list of transformer blocks
         self.transformer_blocks = nn.ModuleList([

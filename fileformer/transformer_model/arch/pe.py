@@ -35,7 +35,7 @@ class RotaryPositionalEmbeddings(nn.Module):
 
         neg_half_x = self._neg_half(x)
         x_rope = (x * cos_vals) + (neg_half_x * sin_vals)
-        return x_rope
+        return x + x_rope
 
 class LearnablePositionalEmbeddings(nn.Module):
     def __init__(self, dim: int, max_seq_len: int = 10_000):
