@@ -324,7 +324,7 @@ class MultiHeadLatentAttention(nn.Module):
         scores = torch.matmul(Q_latent, K_latent.transpose(-2, -1)) / self.scale
 
         if mask is not None:
-            scores = scores.masked_fill(mask == 0, float('-inf'))
+            scores = scores.masked_fill(mask[:, None, None, :], float('-inf'))
 
         attention_weights = F.softmax(scores, dim=-1)
 
