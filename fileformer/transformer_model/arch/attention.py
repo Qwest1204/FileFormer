@@ -352,8 +352,9 @@ class MultiHeadLatentAttention(nn.Module):
         if mask is not None:
             # mask is (bs, seqlen_kv) with 0 for padding positions
             pad_mask = mask.repeat_interleave(self.num_heads, dim=0)  # (bs*num_heads, seqlen_kv)
+            pad_mask = pad_mask.unsqueeze(1)
             # Broadcasting over query dimension: mask out key positions that are padding
-            attention_scores = attention_scores.masked_fill(pad_mask == 0, float('-inf'))
+            attention_scores = attention_scores.masked_fill(pad_mask, float('-inf'))
 
         attention_weights = F.softmax(attention_scores, dim=-1)
         attn_output = torch.einsum('bnm,bmd->bnd', attention_weights, v)
