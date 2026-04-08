@@ -8,7 +8,8 @@ __all__ = [
     'eval',
     'mlp',
     'utils',
-    'pe'
+    'pe',
+    'Engine',
 ]
 
 from fileformer.file_dataset import FileDataset, ENWIK8Dataset
@@ -19,4 +20,5 @@ import fileformer.transformer_model.arch.attention as attention
 import fileformer.transformer_model.arch.mlp as mlp
 import fileformer.transformer_model.utils as utils
 from fileformer.transformer_model.arch import pe
+from fileformer.engine.engine import Engine
 from fileformer import eval
