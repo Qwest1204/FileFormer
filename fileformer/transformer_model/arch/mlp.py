@@ -1,20 +1,16 @@
 import torch
 import torch.nn as nn
 
-class MLP(nn.Module):
-    def __init__(self, emb_size:int, dim_ff:int, activation_type:str, dropout:float):
-        super(MLP, self).__init__()
-        if activation_type == "relu":
-            self.activation = nn.ReLU()
-        if activation_type == "gelu":
-            self.activation = nn.GELU()
-        else:
-            assert "Unknown activation type, avai: gelu, relu"
-        self.mlp = nn.Sequential(
-            nn.Linear(emb_size, dim_ff),
-            self.activation,
-            nn.Linear(dim_ff, emb_size),
-            nn.Dropout(dropout),
-        )
-    def forward(self, x):
-        return self.mlp(x)
+class Expert(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(Expert, self).__init__()
+
+
+class Router(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_mixtures):
+        super(Router, self).__init__()
+
+
+class MixtureOfExperts(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, n_mixtures):
+        super(MixtureOfExperts, self).__init__()
