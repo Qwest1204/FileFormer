@@ -164,4 +164,4 @@ cython_debug/
 
 *.pt
 
-*andbox.ipynb
+notebooks/sandbox.ipynb
