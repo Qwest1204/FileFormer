@@ -1,0 +1,23 @@
+[project]
+name = "fileformer"
+version = "0.2.1"
+description = "Neural file compressor of new generation"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "constriction>=0.4.2",
+    "numpy>=2.4.4",
+    "pyyaml>=6.0.3",
+    "safetensors>=0.7.0",
+    "torch>=2.11.0",
+    "tqdm>=4.67.3",
+]
+
+[dependency-groups]
+dev = [
+    "black>=26.3.1",
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
+    "mypy>=1.20.0",
+    "pytest>=9.0.3",
+]
