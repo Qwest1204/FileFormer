@@ -1,9 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "fileformer"
 version = "0.2.1"
 description = "Neural file compressor of new generation"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 dependencies = [
     "constriction>=0.4.2",
     "numpy>=2.4.4",
@@ -21,3 +25,7 @@ dev = [
     "mypy>=1.20.0",
     "pytest>=9.0.3",
 ]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = {find = {where = ["src"]}}
