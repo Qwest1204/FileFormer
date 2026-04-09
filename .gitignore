@@ -164,4 +164,4 @@ cython_debug/
 
 *.pt
 
-sandbox.ipynb
+*andbox.ipynb
