@@ -1,51 +1,55 @@
+![Logo](images/cover.png)
 
-# Notus
+## Next generation in lossless data compression
 
-a new solution to save space on your device. Imagine a bottomless handbag in which you can put anything you want, without restrictions. We've made it a reality!
-
-
-## Authors
-
-- Head of AI development: [@Qwest1204](https://github.com/Qwest1204)
-
-
-## Tech Stack
-
-**model:** PyTorch, Keras, numpy, BPETokenizer, Transformer
-
-**train** RAY, Nvidia DGX, Selectel, Kubeflow
-
-**data:** polars, hugging face
+---
+[![Python](https://img.shields.io/badge/python-3.14-blue.svg)](https://docs.python.org/3/whatsnew/3.11.html)
+[![Linux platform](https://img.shields.io/badge/platform-linux--64-orange.svg)](https://releases.ubuntu.com/22.04/)
+[![License](https://img.shields.io/badge/license-GNU--GPLv3-yellow.svg)](https://opensource.org/licenses/BSD-3-Clause)
 
 
-## Running Tests
+**Fileformer** is a next-generation lossless neural network archiver that uses advanced transformer architecture and GPU-accelerated arithmetic compression. It compresses data more than twice as efficiently while running 10 times faster than cmix and nncp.
 
-To run the tests, run the following command
 
-```bash
-  python -m pytest --import-mode=append .
-```
+## Key features:
+
+- LoRA-based adaptation – the neural network doesn't retrain for each file, but adapts on the fly using low-rank adaptation. This enables personalization without retraining the entire model.
+
+
+- Long context – 32k bytes – the transformer sees 32k bytes of input data, allowing it to capture long-term dependencies.
+
+
+- Hybrid architecture – Flash Attention + Multi-head Latent Attention (MLA) for high speed and efficient processing of long sequences on the GPU.
 
 
 ## Run Locally
 
-request access to docker reg
+1. Install uv
 
 ```bash
-docker pull ghcr.io/mralphafile/fileformer/fileformer-dev-cuda:latest
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# or pip: pip install uv
 ```
 
+2. Clone the repository
 
-## Roadmap
+```bash
+git clone https://github.com/Qwest1204/FileFormer
+cd FileFormer
+```
 
-- Train model on 10TB data
+3. Download pre-trained weights from releases
+```bash
+wget -P checkpoint https://github.com/Qwest1204/FileFormer/releases/*
+```
 
-- Implement Reinforcement Learning to optimization on real data
+4. Install project dependencies
 
-- Implement full pipeline (request external info)
-
+```bash
+uv sync
+```
 
 ## Feedback
 
-If you have any feedback, please reach out to us at notus@corp.com
+If you have any feedback, please reach out to us at workemailfordaniil@gmail.com
 
