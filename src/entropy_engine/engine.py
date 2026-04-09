@@ -13,13 +13,12 @@
 #  ║                     ~ Puritas Codicis ~                          ║
 #  ╚══════════════════════════════════════════════════════════════════╝
 
-from fileformer import FileFormer, ByteLevelTokenizer
+from model import FileFormer, ByteLevelTokenizer
 import torch
 import constriction
 import numpy as np
-import torch.nn.functional as F
 import struct
-from .utils import normalize_probabilities
+from utils.utils import normalize_probabilities
 
 class Engine:
     def __init__(self, seed, model: FileFormer, tokenizer: ByteLevelTokenizer):
@@ -57,7 +56,7 @@ class Engine:
         message_decoder = constriction.stream.queue.RangeDecoder(data)
         context = torch.tensor([62], dtype=torch.long)
         reconstructed = []
-        for _ in range(len(len_tgt)):  # декодируем ровно столько символов, сколько было
+        for _ in range(len_tgt):  # декодируем ровно столько символов, сколько было
             with torch.no_grad():
                 logits = self.model.forward(context.unsqueeze(0))
                 probs = normalize_probabilities(logits[0, -1, :], temperature=5.0)

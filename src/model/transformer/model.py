@@ -1,6 +1,6 @@
 import torch.nn as nn
-from fileformer.transformer_model.arch import attention
-from fileformer.transformer_model.arch import pe
+from .attention import MultiHeadAttention
+from .pe import RotaryPositionalEmbeddings
 
 class FeedForward(nn.Module):
     def __init__(self, embed_size, ff_hidden_size):
@@ -21,7 +21,7 @@ class FileFormerBlock(nn.Module):
                  qkv_bias: bool,
                  ):
         super(FileFormerBlock, self).__init__()
-        self.mha = attention.MultiHeadAttention(dim, num_heads, qkv_bias)
+        self.mha = MultiHeadAttention(dim, num_heads, qkv_bias)
         self.ff = FeedForward(dim, dim_ff)
         self.ln1 = nn.LayerNorm(dim)
         self.ln2 = nn.LayerNorm(dim)
@@ -39,7 +39,7 @@ class FileFormer(nn.Module):
 
         self.embedding = nn.Embedding(vocab_size, embed_size)
 
-        self.positional_encoding = pe.RotaryPositionalEmbeddings(embed_size)
+        self.positional_encoding = RotaryPositionalEmbeddings(embed_size)
 
         # Create a list of transformer blocks
         self.transformer_blocks = nn.ModuleList([
