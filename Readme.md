@@ -40,7 +40,7 @@ cd FileFormer
 
 3. Download pre-trained weights from releases
 ```bash
-wget -P checkpoint https://github.com/Qwest1204/FileFormer/releases/*
+wget -P checkpoint https://github.com/Qwest1204/FileFormer/releases/download/pre-alpha/model_enwiki_pre-v0.0.1.pt
 ```
 
 4. Install project dependencies
