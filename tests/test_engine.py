@@ -14,18 +14,17 @@ def shannon(boe):
 def c_and_r():
     model = FileFormer(257, 256, 4, 4, 0.0)
     model.load_state_dict(
-        torch.load("checkpoints/model_flash_epoch_9.pt",
+        torch.load("checkpoints/model_enwiki_pre-v0.0.1.pt",
                    map_location="cpu")['model_state_dict']
     )
     model.eval()
-    engine = Engine(42, model, ByteLevelTokenizer())
+    engine = Engine(42, model, ByteLevelTokenizer(), 128)
 
     with open('data/raw/enwik512b', 'rb') as f:
         origin_data = f.read(512).hex()
 
-    out = engine._compress(origin_data)
-    recovered_data = engine._decompress(out, 512)
-    compressed_data = out.astype('<u4').tobytes()
+    compressed_data = engine.compress(origin_data)
+    recovered_data = engine.decompress(compressed_data)
     return recovered_data, origin_data, compressed_data
 
 
