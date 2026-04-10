@@ -49,6 +49,36 @@ wget -P checkpoint https://github.com/Qwest1204/FileFormer/releases/download/pre
 uv sync
 ```
 
+5. Run tests
+```bash
+uv run pytest
+```
+
+6. Example of usage:
+
+```python
+
+import torch
+from entropy_engine import Engine
+from model import FileFormer, ByteLevelTokenizer
+
+model = FileFormer(257, 256, 4, 4, 0.0)
+model.load_state_dict(
+        torch.load("checkpoints/model_enwiki_pre-v0.0.1.pt",
+                   map_location="cpu")['model_state_dict']
+    )
+model.eval()
+
+engine = Engine(seed=42, model=model, tokenizer=ByteLevelTokenizer(), chunk_size=1024)
+
+with open('file', 'rb') as f:
+    origin_data = f.read().hex()
+
+compressed_data = engine.compress(origin_data)
+
+decompressed_data = engine.decompress(compressed_data)
+
+```
 ## Feedback
 
 If you have any feedback, please reach out to us at workemailfordaniil@gmail.com
