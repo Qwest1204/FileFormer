@@ -1,6 +1,5 @@
-from .dataset import FileDataset, ENWIK8Dataset
+from .dataset import FileDataset
 
 __all__ = [
     'FileDataset',
-    'ENWIK8Dataset'
 ]
