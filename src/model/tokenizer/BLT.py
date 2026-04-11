@@ -2,7 +2,7 @@ class ByteLevelTokenizer:
     def __init__(self):
         # Специальные токены
         self.special_tokens = [
-            "<mask>", "<pad>", #"<BOS>", "<SOS>", "<EOS>"
+            "<mask>", "<pad>", "<BOS>", "<SOS>", "<EOS>"
         ]
 
         # Создание словаря
