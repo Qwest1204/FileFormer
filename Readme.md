@@ -54,6 +54,11 @@ uv sync
 uv run pytest
 ```
 
+5. 1 Run speed test
+```bash
+uv run scripts/speed_test.py
+```
+
 6. Example of usage:
 
 ```python
