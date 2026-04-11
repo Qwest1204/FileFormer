@@ -19,10 +19,14 @@ class FileFormerBlock(nn.Module):
                  dim_ff: int,
                  dropout: float,
                  qkv_bias: bool,
-                 is_causal: bool
+                 is_causal: bool,
+                 rank: int,
+                 lora_alpha: float,
+                 use_lora: bool
+
                  ):
         super(FileFormerBlock, self).__init__()
-        self.mha = MultiHeadAttention(dim, num_heads, qkv_bias)
+        self.mha = MultiHeadAttention(dim, num_heads, qkv_bias, enable_lora=use_lora, rank=rank, lora_alpha=lora_alpha)
         self.ff = FeedForward(dim, dim_ff)
         self.ln1 = nn.LayerNorm(dim)
         self.ln2 = nn.LayerNorm(dim)
@@ -36,7 +40,7 @@ class FileFormerBlock(nn.Module):
 
 
 class FileFormer(nn.Module):
-    def __init__(self, vocab_size, embed_size, n_heads, n_layers, drop_rate):
+    def __init__(self, vocab_size, embed_size, n_heads, n_layers, drop_rate, rank: int, lora_alpha: float, use_lora: bool):
         super().__init__()
 
         self.embedding = nn.Embedding(vocab_size, embed_size)
@@ -46,7 +50,7 @@ class FileFormer(nn.Module):
         # Create a list of transformer blocks
         self.transformer_blocks = nn.ModuleList([
             # Each transformer block consists of multi-head attention and feed-forward layers
-            FileFormerBlock(embed_size, n_heads, embed_size * 4, drop_rate, False, is_causal=False)
+            FileFormerBlock(embed_size, n_heads, embed_size * 4, drop_rate, False, is_causal=False, use_lora=use_lora, rank=rank, lora_alpha=lora_alpha)
             for _ in range(n_layers)  # Repeat for the number of layers specified in the config
         ])
 
