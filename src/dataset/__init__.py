@@ -1,5 +1,6 @@
-from .dataset import FileDataset
+from .dataset import FileDataset, MultiFileDataset
 
 __all__ = [
     'FileDataset',
+    'MultiFileDataset'
 ]

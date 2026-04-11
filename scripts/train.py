@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from model import FileFormer, ByteLevelTokenizer
-from dataset import FileDataset
+from dataset import MultiFileDataset
 from training import train_one_epoch
 
 tokenizer = ByteLevelTokenizer()
@@ -23,8 +23,8 @@ CLIP_GRAD_NORM = 10.0
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 SAVE_DIR = "../checkpoints/"
 
-train_dataset = FileDataset(file_path="../data/raw/<file>", seq_len=SEQ_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache")
-val_dataset = FileDataset(file_path="../data/raw/<file>", seq_len=VAL_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache")
+train_dataset = MultiFileDataset(data_dir="../data/raw/<file>", seq_len=SEQ_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".i"))
+val_dataset = MultiFileDataset(data_dir="../data/raw/<file>", seq_len=VAL_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".t"))
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
