@@ -54,3 +54,25 @@ def normalize_probabilities(logits, min_prob=1e-6, temperature=2.0):
 
 
     return new_probs
+
+def convert_state_dict_to_lora(old_state_dict, lora_modules=['q_proj', 'v_proj']):
+    new_state_dict = {}
+    for key, value in old_state_dict.items():
+        if any(f'.{mod}.' in key or key.endswith(f'.{mod}') for mod in lora_modules):
+            if key.endswith('.weight'):
+                new_key = key.replace('.weight', '.linear.weight')
+            elif key.endswith('.bias'):
+                new_key = key.replace('.bias', '.linear.bias')
+            else:
+                new_key = key
+        else:
+            new_key = key
+        new_state_dict[new_key] = value
+    return new_state_dict
+
+def freeze_all_except_lora(model):
+    for name, param in model.named_parameters():
+        if 'lora_' in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False
