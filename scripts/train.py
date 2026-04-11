@@ -35,7 +35,7 @@ model = FileFormer(
         n_heads=N_HEADS,
         n_layers=N_LAYERS,
         drop_rate=DROP_RATE
-    )
+    ).to(DEVICE)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 loss_fn = nn.CrossEntropyLoss(ignore_index=1)  # игнорируем pad_token_id
