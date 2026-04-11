@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from .lora import LoRALinear
 
 class SelfAttention(nn.Module):
     """Single-head scaled dot-product self-attention.
@@ -63,6 +64,9 @@ class MultiHeadAttention(nn.Module):
         num_heads: int,
         qkv_bias: bool = False,
         dropout: float = 0.0,
+        enable_lora: bool = False,
+        rank: int = 0,
+        lora_alpha: float = 0.0
     ):
         super().__init__()
         assert emb_size % num_heads == 0, "emb_size must be divisible by num_heads"
@@ -73,8 +77,15 @@ class MultiHeadAttention(nn.Module):
         self.dropout = dropout
 
         self.q_proj = nn.Linear(emb_size, emb_size, bias=qkv_bias)
+        if enable_lora:
+            self.q_proj = LoRALinear(emb_size, emb_size, rank, lora_alpha, bias=qkv_bias)
+
         self.k_proj = nn.Linear(emb_size, emb_size, bias=qkv_bias)
+
         self.v_proj = nn.Linear(emb_size, emb_size, bias=qkv_bias)
+        if enable_lora:
+            self.v_proj = LoRALinear(emb_size, emb_size, rank, lora_alpha, bias=qkv_bias)
+
         self.out_proj = nn.Linear(emb_size, emb_size)
 
     def forward(
