@@ -30,6 +30,7 @@ from utils.utils import (
     convert_state_dict_to_lora,
     load_model
 )
+from muon import MuonWithAuxAdam
 
 
 class Engine:
@@ -62,8 +63,8 @@ class Engine:
             temperature: float = 5.0,
             lora_per_chanks: int = 4,
             lora_finetune_epochs: int = 1,
-            lora_learning_rate: float = 1e-3,
-            finetune_mask_ratio: float = 0.15,    # 10-15% masking during finetuning
+            lora_learning_rate_muon: float = 0.1,
+            lora_learning_rate_adamw: float = 3e-4,
     ):
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -77,8 +78,8 @@ class Engine:
         self.temperature = temperature
         self.lora_per_chanks = lora_per_chanks
         self.lora_finetune_epochs = lora_finetune_epochs
-        self.lora_learning_rate = lora_learning_rate
-        self.finetune_mask_ratio = finetune_mask_ratio
+        self.lora_learning_rate_muon = lora_learning_rate_muon
+        self.lora_learning_rate_adamw = lora_learning_rate_adamw
         self.model.eval()
 
         # Cache the initial LoRA state (if any) to restore after each group
@@ -151,66 +152,126 @@ class Engine:
         Freeze all model parameters except those belonging to LoRA.
         Returns an optimizer configured for the LoRA parameters.
         """
+        muon_params = []
+        adamw_params = []
         freeze_all_except_lora(self.model)
-        lora_params = [p for n, p in self.model.named_parameters() if 'lora_' in n]
-        optimizer = optim.AdamW(lora_params, lr=self.lora_learning_rate)
+
+        for name, param in self.model.named_parameters():
+            if not param.requires_grad:
+                continue
+
+            # Muon работает только с 2D тензорами (веса линейных слоёв)
+            if param.ndim == 2:
+                muon_params.append(param)
+            else:
+                adamw_params.append(param)
+
+        weight_decay = 0.01
+        betas = (0.95, 0.95)
+
+        # Формируем param_groups для MuonWithAuxAdam
+        param_groups = [
+            {
+                'params': muon_params,
+                'use_muon': True,
+                'lr': self.lora_learning_rate_muon,
+                'weight_decay': weight_decay,
+                'momentum': 0.95,  # Параметр momentum для Muon
+            },
+            {
+                'params': adamw_params,
+                'use_muon': False,
+                'lr': self.lora_learning_rate_adamw,
+                'betas': betas,  # betas используются только для AdamW
+                'weight_decay': weight_decay,
+            }
+        ]
+
+        # Создаём и возвращаем оптимизатор
+        optimizer = torch.optim.Muon(param_groups)
         return optimizer
 
     def _finetune_on_chunks(self, chunks_data: list) -> dict:
         """
-        Fine‑tune the model's LoRA parameters on a list of byte chunks.
-        Randomly masks `finetune_mask_ratio` (default 15%) of tokens.
-        Returns the updated LoRA state dict.
+        Fine‑tune LoRA на группе чанков.
+        Процент маскируемых токенов растёт с каждой эпохой после второй:
+        первые 2 эпохи – 0%, далее +7.5% за эпоху.
+        Loss вычисляется по всем позициям (включая незамаскированные).
         """
         if not chunks_data:
             return self._get_lora_state_dict()
 
         self.model.train()
         optimizer = self._prepare_lora_finetune()
-        loss_fn = nn.CrossEntropyLoss(ignore_index=0)  # ignore padding tokens
+        loss_fn = nn.CrossEntropyLoss(ignore_index=self.mask_token_id)  # игнорируем паддинги
 
         for epoch in range(self.lora_finetune_epochs):
+            # Определяем процент удаления для текущей эпохи
+            if epoch < 2:
+                p_mask = 0.0
+            else:
+                p_mask = 0.075 * (epoch - 1)
+                if p_mask > 1.0:
+                    p_mask = 1.0
+
             total_loss = 0.0
+            batch_inputs = []  # замаскированные последовательности
+            batch_targets = []  # оригинальные последовательности (полные)
+
             for chunk_bytes in chunks_data:
                 hex_chunk = chunk_bytes.hex()
                 tokens = self.tokenizer.encode(hex_chunk)
                 L = len(tokens)
-
-                # Determine how many tokens to mask (10-15% of sequence)
-                num_mask = max(1, int(L * self.finetune_mask_ratio))
-                # Candidate positions: all indices except possibly special ones
-                candidate_positions = list(range(L))
-                # Optionally exclude the mask token itself if it appears naturally
-                # (but it's unlikely in byte-level tokenization)
-                mask_positions = set(random.sample(candidate_positions, min(num_mask, L)))
-
-                # Build masked sequence and targets
-                masked_tokens = tokens.copy()
-                targets = []
-                mask_indices = []
-                for i in range(L):
-                    if i in mask_positions:
-                        masked_tokens[i] = self.mask_token_id
-                        mask_indices.append(i)
-                        targets.append(tokens[i])
-
-                if not mask_indices:
+                if L <= 2:
                     continue
 
-                input_tensor = torch.tensor(masked_tokens, dtype=torch.long).unsqueeze(0)
-                optimizer.zero_grad()
-                logits = self.model.forward(input_tensor)  # (1, L, vocab_size)
-                logits_masked = logits[0, mask_indices, :]  # (M, vocab_size)
-                targets_tensor = torch.tensor(targets, dtype=torch.long)
+                # Копируем оригинальные токены
+                masked_tokens = tokens.copy()
 
-                loss = loss_fn(logits_masked, targets_tensor)
-                loss.backward()
-                optimizer.step()
+                # Маскируем выбранные позиции (исключая первый и последний)
+                if p_mask > 0.0:
+                    for i in range(1, L - 1):
+                        if random.random() < p_mask:
+                            masked_tokens[i] = self.mask_token_id
 
-                total_loss += loss.item()
-                print(loss.item())
+                # Сохраняем вход (маскированный) и полный target (оригинал)
+                batch_inputs.append(masked_tokens)
+                batch_targets.append(tokens.copy())  # оригинал целиком
+
+            if not batch_inputs:
+                continue
+
+            # Паддинг до максимальной длины в батче
+            max_len = max(len(seq) for seq in batch_inputs)
+            padded_inputs = []
+            padded_targets = []
+            attention_mask = []  # может пригодиться, но loss_fn использует ignore_index
+
+            for input_seq, target_seq in zip(batch_inputs, batch_targets):
+                pad_len = max_len - len(input_seq)
+                # Для входов паддинг заполняем mask_token_id (можно и pad_token_id)
+                padded_inputs.append(input_seq + [self.mask_token_id] * pad_len)
+                # Для target паддинг заполняем mask_token_id, чтобы loss их игнорировал
+                padded_targets.append(target_seq + [self.mask_token_id] * pad_len)
+                attention_mask.append([1] * len(input_seq) + [0] * pad_len)
+
+            input_tensor = torch.tensor(padded_inputs, dtype=torch.long)
+            target_tensor = torch.tensor(padded_targets, dtype=torch.long)
+            attention_mask = torch.tensor(attention_mask, dtype=torch.bool)
+
+            optimizer.zero_grad()
+            logits = self.model.forward(input_tensor)  # (B, max_len, vocab_size)
+
+            # Вычисляем loss для всех позиций (игнорируем pad-токены через ignore_index)
+            # logits: (B, max_len, vocab_size), target_tensor: (B, max_len)
+            loss = loss_fn(logits.permute(0, 2, 1), target_tensor)  # CrossEntropy ожидает (N, C, ...)
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+
             if self.lora_finetune_epochs > 1:
-                print(f"Epoch {epoch+1} avg loss: {total_loss/len(chunks_data):.4f}")
+                print(f"Epoch {epoch + 1}/{self.lora_finetune_epochs} loss: {total_loss:.4f}, p_mask={p_mask:.3f}")
 
         self.model.eval()
         return self._get_lora_state_dict()
@@ -406,7 +467,20 @@ class Engine:
 
             # Deserialize and apply LoRA state
             lora_state = self._deserialize_lora_state(lora_bytes)
-            self._set_lora_state_dict(lora_state)
+            fixed_state_dict = {}
+            for key, value in lora_state.items():
+                if 'lora_A' in key and value.dim() == 1:
+                    # Предполагаем, что ранг r = 4 (из сообщения об ошибке)
+                    r = 4
+                    in_features = value.numel() // r
+                    fixed_state_dict[key] = value.view(r, in_features)
+                elif 'lora_B' in key and value.dim() == 1:
+                    r = 4
+                    out_features = value.numel() // r
+                    fixed_state_dict[key] = value.view(out_features, r)
+                else:
+                    fixed_state_dict[key] = value
+            self._set_lora_state_dict(fixed_state_dict)
 
             # Determine how many chunks in this group
             group_size = min(self.lora_per_chanks, num_chunks - chunks_processed)
