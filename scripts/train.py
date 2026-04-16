@@ -14,17 +14,19 @@ EMBED_SIZE = 256
 SEQ_LEN = 8096
 VAL_LEN = int(SEQ_LEN/2)
 N_HEADS = 4
+N_EXPERTS = 8
+TOP_K = 2
 N_LAYERS = 6
-DROP_RATE = 0.07
+DROP_RATE = 0.15
 BATCH_SIZE = 32
 EPOCHS = 10
 LR = 3e-5
 CLIP_GRAD_NORM = 10.0
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SAVE_DIR = "../checkpoints/"
+SAVE_DIR = "root/FileFormer/checkpoints/"
 
-train_dataset = MultiFileDataset(data_dir="../data/raw/<file>", seq_len=SEQ_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".i"))
-val_dataset = MultiFileDataset(data_dir="../data/raw/<file>", seq_len=VAL_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".t"))
+train_dataset = MultiFileDataset(data_dir="root/FileFormer/data/raw/", seq_len=SEQ_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".i"))
+val_dataset = MultiFileDataset(data_dir="root/FileFormer/data/raw/", seq_len=VAL_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".j"))
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
@@ -34,7 +36,13 @@ model = FileFormer(
         embed_size=EMBED_SIZE,
         n_heads=N_HEADS,
         n_layers=N_LAYERS,
-        drop_rate=DROP_RATE
+        dropout=0.1,
+        num_experts=N_EXPERTS,
+        top_k=TOP_K,
+        noisy_gating=True,
+        rank=0,
+        lora_alpha=1.0,
+        use_lora=False,
     ).to(DEVICE)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)

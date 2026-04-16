@@ -49,7 +49,7 @@ def train_one_epoch(
         optimizer.zero_grad(set_to_none=True)
 
         # Прямой проход
-        logits = model(source)
+        logits, aux_loss = model(source)
 
         # Преобразование размерностей: (batch * seq_len, vocab_size) и (batch * seq_len)
         logits_flat = logits.reshape(-1, logits.size(-1))
@@ -64,7 +64,7 @@ def train_one_epoch(
             loss = loss_fn(logits_flat[mask], target_flat[mask])
         else:
             loss = torch.tensor(0.0, device=device, requires_grad=True)
-
+        loss = loss + 0.001*aux_loss
         # Обратный проход и шаг оптимизатора
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad_norm)
