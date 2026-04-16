@@ -177,5 +177,5 @@ class MultiFileDataset(Dataset):
         if self.mask_prob > 0.0:  # предположим, что обучение определяет self.training
             mask = torch.rand(tgt_seq.shape) < self.mask_prob
             src_seq[mask] = self.mask_token_id
-
+            tgt_seq[~mask] = -100
         return tgt_seq, src_seq

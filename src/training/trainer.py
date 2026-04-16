@@ -51,20 +51,9 @@ def train_one_epoch(
         # Прямой проход
         logits, aux_loss = model(source)
 
-        # Преобразование размерностей: (batch * seq_len, vocab_size) и (batch * seq_len)
-        logits_flat = logits.reshape(-1, logits.size(-1))
-        target_flat = target.reshape(-1)
-
-        # Маска: выбираем только позиции, не равные ignore_index (т.е. замаскированные токены)
-        mask = target_flat != 0
-
-        # Если в батче есть хотя бы один замаскированный токен – считаем потери по ним,
-        # иначе loss = 0 (такого почти не случается, но для устойчивости обрабатываем)
-        if mask.sum() > 0:
-            loss = loss_fn(logits_flat[mask], target_flat[mask])
-        else:
-            loss = torch.tensor(0.0, device=device, requires_grad=True)
-        loss = loss + 0.001*aux_loss
+        # Просто вычисляем потери – CrossEntropyLoss сам проигнорирует ignore_index
+        loss = loss_fn(logits.view(-1, logits.size(-1)), target.view(-1))
+        loss = loss + 0.001 * aux_loss
         # Обратный проход и шаг оптимизатора
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad_norm)
