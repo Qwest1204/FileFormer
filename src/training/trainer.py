@@ -82,19 +82,8 @@ def train_one_epoch(
             for target, source in val_progress:
                 target = target.to(device, non_blocking=True)
                 source = source.to(device, non_blocking=True)
-
                 logits = model(source)
-
-                logits_flat = logits.reshape(-1, logits.size(-1))
-                target_flat = target.reshape(-1)
-
-                # Аналогичная маскировка для валидации
-                mask = target_flat != 0
-                if mask.sum() > 0:
-                    loss = loss_fn(logits_flat[mask], target_flat[mask])
-                else:
-                    loss = torch.tensor(0.0, device=device)
-
+                loss = loss_fn(logits.view(-1, logits.size(-1)), target.view(-1))
                 val_loss_accumulator += loss.item()
                 val_progress.set_postfix({"loss": f"{loss.item():.4f}"})
 
