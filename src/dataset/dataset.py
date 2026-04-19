@@ -7,25 +7,26 @@ from safetensors import safe_open
 import hashlib
 from model import ByteLevelTokenizer
 
+
 class FileDataset(Dataset):
     def __init__(
         self,
         file_path: str,
         seq_len: int,
-        mask_prob: float = 0.15,
+        mask_prob: float = 0.2,          # доля предсказываемых токенов (20%)
         cache_dir: str = None,
         force_rebuild: bool = False,
     ):
         self.tokenizer = ByteLevelTokenizer()
         self.seq_len = seq_len
         self.mask_prob = mask_prob
-        self.mask_token_id = self.tokenizer.encode("<MASK>")[0]  # предполагаем наличие токена <mask>
+        self.mask_token_id = self.tokenizer.encode("<MASK>")[0]
 
         if cache_dir is None:
             cache_dir = os.path.dirname(file_path)
         os.makedirs(cache_dir, exist_ok=True)
 
-        # Формируем уникальный хэш с учётом новых параметров
+        # Уникальный хэш кэша
         params = (
             f"{os.path.basename(file_path)}_{seq_len}_"
             f"{mask_prob}_{os.path.getsize(file_path)}"
@@ -68,30 +69,62 @@ class FileDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        tgt_seq = self.safetensors.get_tensor(f"input_ids_{idx}").clone()
-        src_seq = tgt_seq.clone()
+        # Исходная последовательность
+        original = self.safetensors.get_tensor(f"input_ids_{idx}").clone()
+        src_seq = original.clone()
+        tgt_seq = torch.full_like(original, -100)  # по умолчанию игнорируем всё
 
-        # Применяем замену n% токенов на MASK
-        if self.mask_prob > 0.0:  # предположим, что обучение определяет self.training
-            mask = torch.rand(tgt_seq.shape) < self.mask_prob
-            src_seq[mask] = self.mask_token_id
+        # Выбираем токены для предсказания (mask_prob)
+        prob = torch.rand(original.shape)
+        selected = prob < self.mask_prob          # маска предсказываемых позиций
+        num_selected = selected.sum().item()
+
+        if num_selected > 0:
+            # Для каждого выбранного токена решаем, что с ним делать
+            action_prob = torch.rand(num_selected)  # [0,1)
+
+            # Маски внутри выбранных позиций для разных действий
+            mask_action = action_prob < 0.8
+            random_action = (action_prob >= 0.8) & (action_prob < 0.9)
+            keep_action = action_prob >= 0.9
+
+            # Получаем индексы выбранных токенов
+            selected_indices = selected.nonzero(as_tuple=True)[0]
+
+            # Действие 1: замена на [MASK] (80%)
+            mask_indices = selected_indices[mask_action]
+            src_seq[mask_indices] = self.mask_token_id
+
+            # Действие 2: замена на случайный токен (10%)
+            random_indices = selected_indices[random_action]
+            if random_indices.numel() > 0:
+                # Случайный токен из диапазона байтов 0-255 (или всего словаря)
+                random_tokens = torch.randint(5, 262, (random_indices.numel(),),
+                                              dtype=torch.long)
+                src_seq[random_indices] = random_tokens
+
+            # Действие 3: оставить как есть (10%) – src_seq уже содержит оригинал
+
+            # Заполняем target: только для выбранных позиций сохраняем оригинал
+            tgt_seq[selected] = original[selected]
 
         return tgt_seq, src_seq
+
 
 class MultiFileDataset(Dataset):
     def __init__(
         self,
         data_dir: str,
         seq_len: int,
-        mask_prob: float = 0.15,
-        extensions: tuple = ('.txt', '.enwik8', '.text'),
+        mask_prob: float = 0.2,          # доля предсказываемых токенов
+        extensions: tuple = ('.txt', '.enwik8', '.text', '.i', '.j'),
         cache_dir: str = None,
         force_rebuild: bool = False,
     ):
         self.tokenizer = ByteLevelTokenizer()
         self.seq_len = seq_len
         self.mask_prob = mask_prob
-        self.mask_token_id = self.tokenizer.encode("<MASK>")[0]  # предполагаем наличие токена <mask>
+        self.mask_token_id = self.tokenizer.encode("<MASK>")[0]
 
         self.data_dir = Path(data_dir)
         if not self.data_dir.exists():
@@ -170,12 +203,40 @@ class MultiFileDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        tgt_seq = self.safetensors.get_tensor(f"input_ids_{idx}").clone()
-        src_seq = tgt_seq.clone()
+        # Исходная последовательность
+        original = self.safetensors.get_tensor(f"input_ids_{idx}").clone()
+        src_seq = original.clone()
+        tgt_seq = torch.full_like(original, -100)  # по умолчанию игнорируем всё
 
-        # Применяем замену n% токенов на MASK
-        if self.mask_prob > 0.0:  # предположим, что обучение определяет self.training
-            mask = torch.rand(tgt_seq.shape) < self.mask_prob
-            src_seq[mask] = self.mask_token_id
-            tgt_seq[~mask] = -100
+        # Выбираем токены для предсказания (mask_prob)
+        prob = torch.rand(original.shape)
+        selected = prob < self.mask_prob          # маска предсказываемых позиций
+        num_selected = selected.sum().item()
+
+        if num_selected > 0:
+            # Для каждого выбранного токена решаем, что с ним делать
+            action_prob = torch.rand(num_selected)
+
+            mask_action = action_prob < 0.8
+            random_action = (action_prob >= 0.8) & (action_prob < 0.9)
+            keep_action = action_prob >= 0.9
+
+            selected_indices = selected.nonzero(as_tuple=True)[0]
+
+            # Замена на [MASK] (80%)
+            mask_indices = selected_indices[mask_action]
+            src_seq[mask_indices] = self.mask_token_id
+
+            # Замена на случайный токен (10%)
+            random_indices = selected_indices[random_action]
+            if random_indices.numel() > 0:
+                random_tokens = torch.randint(5, 262, (random_indices.numel(),),
+                                              dtype=torch.long)
+                src_seq[random_indices] = random_tokens
+
+            # Оставить как есть (10%) – src_seq уже содержит оригинал
+
+            # Target: только для выбранных позиций сохраняем оригинал
+            tgt_seq[selected] = original[selected]
+
         return tgt_seq, src_seq
