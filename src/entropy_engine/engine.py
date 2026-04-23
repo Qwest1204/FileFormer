@@ -30,7 +30,6 @@ from utils.utils import (
     convert_state_dict_to_lora,
     load_model
 )
-from muon import MuonWithAuxAdam
 
 
 class Engine:
@@ -63,8 +62,8 @@ class Engine:
             temperature: float = 5.0,
             lora_per_chanks: int = 4,
             lora_finetune_epochs: int = 1,
-            lora_learning_rate_muon: float = 0.1,
-            lora_learning_rate_adamw: float = 3e-4,
+            lora_learning_rate: float = 3e-4,
+            enable_lora_finetune: bool = True,   # ← новый флаг
     ):
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -78,8 +77,8 @@ class Engine:
         self.temperature = temperature
         self.lora_per_chanks = lora_per_chanks
         self.lora_finetune_epochs = lora_finetune_epochs
-        self.lora_learning_rate_muon = lora_learning_rate_muon
-        self.lora_learning_rate_adamw = lora_learning_rate_adamw
+        self.lora_learning_rate = lora_learning_rate
+        self.enable_lora_finetune = enable_lora_finetune
         self.model.eval()
 
         # Cache the initial LoRA state (if any) to restore after each group
@@ -150,45 +149,18 @@ class Engine:
     def _prepare_lora_finetune(self):
         """
         Freeze all model parameters except those belonging to LoRA.
-        Returns an optimizer configured for the LoRA parameters.
+        Returns an AdamW optimizer configured for the LoRA parameters.
         """
-        muon_params = []
-        adamw_params = []
         freeze_all_except_lora(self.model)
 
-        for name, param in self.model.named_parameters():
-            if not param.requires_grad:
-                continue
+        # Собираем все параметры LoRA
+        params = [p for p in self.model.parameters() if p.requires_grad]
 
-            # Muon работает только с 2D тензорами (веса линейных слоёв)
-            if param.ndim == 2:
-                muon_params.append(param)
-            else:
-                adamw_params.append(param)
-
-        weight_decay = 0.01
-        betas = (0.95, 0.95)
-
-        # Формируем param_groups для MuonWithAuxAdam
-        param_groups = [
-            {
-                'params': muon_params,
-                'use_muon': True,
-                'lr': self.lora_learning_rate_muon,
-                'weight_decay': weight_decay,
-                'momentum': 0.95,  # Параметр momentum для Muon
-            },
-            {
-                'params': adamw_params,
-                'use_muon': False,
-                'lr': self.lora_learning_rate_adamw,
-                'betas': betas,  # betas используются только для AdamW
-                'weight_decay': weight_decay,
-            }
-        ]
-
-        # Создаём и возвращаем оптимизатор
-        optimizer = torch.optim.Muon(param_groups)
+        optimizer = optim.AdamW(
+            params,
+            lr=self.lora_learning_rate,
+            weight_decay=0.01
+        )
         return optimizer
 
     def _finetune_on_chunks(self, chunks_data: list) -> dict:
@@ -203,7 +175,7 @@ class Engine:
 
         self.model.train()
         optimizer = self._prepare_lora_finetune()
-        loss_fn = nn.CrossEntropyLoss(ignore_index=self.mask_token_id)  # игнорируем паддинги
+        loss_fn = nn.CrossEntropyLoss(ignore_index=self.mask_token_id)
 
         for epoch in range(self.lora_finetune_epochs):
             # Определяем процент удаления для текущей эпохи
@@ -215,8 +187,8 @@ class Engine:
                     p_mask = 1.0
 
             total_loss = 0.0
-            batch_inputs = []  # замаскированные последовательности
-            batch_targets = []  # оригинальные последовательности (полные)
+            batch_inputs = []
+            batch_targets = []
 
             for chunk_bytes in chunks_data:
                 hex_chunk = chunk_bytes.hex()
@@ -225,33 +197,27 @@ class Engine:
                 if L <= 2:
                     continue
 
-                # Копируем оригинальные токены
                 masked_tokens = tokens.copy()
 
-                # Маскируем выбранные позиции (исключая первый и последний)
                 if p_mask > 0.0:
                     for i in range(1, L - 1):
                         if random.random() < p_mask:
                             masked_tokens[i] = self.mask_token_id
 
-                # Сохраняем вход (маскированный) и полный target (оригинал)
                 batch_inputs.append(masked_tokens)
-                batch_targets.append(tokens.copy())  # оригинал целиком
+                batch_targets.append(tokens.copy())
 
             if not batch_inputs:
                 continue
 
-            # Паддинг до максимальной длины в батче
             max_len = max(len(seq) for seq in batch_inputs)
             padded_inputs = []
             padded_targets = []
-            attention_mask = []  # может пригодиться, но loss_fn использует ignore_index
+            attention_mask = []
 
             for input_seq, target_seq in zip(batch_inputs, batch_targets):
                 pad_len = max_len - len(input_seq)
-                # Для входов паддинг заполняем mask_token_id (можно и pad_token_id)
                 padded_inputs.append(input_seq + [self.mask_token_id] * pad_len)
-                # Для target паддинг заполняем mask_token_id, чтобы loss их игнорировал
                 padded_targets.append(target_seq + [self.mask_token_id] * pad_len)
                 attention_mask.append([1] * len(input_seq) + [0] * pad_len)
 
@@ -260,12 +226,12 @@ class Engine:
             attention_mask = torch.tensor(attention_mask, dtype=torch.bool)
 
             optimizer.zero_grad()
-            logits = self.model.forward(input_tensor)  # (B, max_len, vocab_size)
+            logits, aux = self.model.forward(input_tensor)
 
-            # Вычисляем loss для всех позиций (игнорируем pad-токены через ignore_index)
-            # logits: (B, max_len, vocab_size), target_tensor: (B, max_len)
-            loss = loss_fn(logits.permute(0, 2, 1), target_tensor)  # CrossEntropy ожидает (N, C, ...)
+            loss = loss_fn(logits.permute(0, 2, 1), target_tensor)
+            loss = loss + 0.01*aux
             loss.backward()
+            print(loss.item())
             optimizer.step()
 
             total_loss += loss.item()
@@ -287,23 +253,18 @@ class Engine:
             kept_tokens     : list[int] of token IDs that were NOT masked
             token_count     : total number of tokens in the chunk
         """
-        # 1. Tokenize the hex string
         tokens = self.tokenizer.encode(hex_chunk)
         L = len(tokens)
 
-        # 2. Determine positions to keep (no mask)
         keep_positions = set()
-        # Always keep first and last
         keep_positions.add(0)
         if L > 1:
             keep_positions.add(L - 1)
 
-        # Keep every keep_every-th token (excluding boundaries)
         for i in range(1, L - 1):
             if i % self.keep_every == 0:
                 keep_positions.add(i)
 
-        # 3. Build masked sequence and collect kept tokens
         masked_tokens = tokens.copy()
         kept_tokens_list = []
         for i in range(L):
@@ -312,13 +273,11 @@ class Engine:
             else:
                 masked_tokens[i] = self.mask_token_id
 
-        # 4. Get probability distributions for all positions from the model
-        masked_tensor = torch.tensor(masked_tokens, dtype=torch.long).unsqueeze(0)  # (1, L)
+        masked_tensor = torch.tensor(masked_tokens, dtype=torch.long).unsqueeze(0)
         with torch.no_grad():
-            logits = self.model.forward(masked_tensor)  # (1, L, vocab_size)
+            logits,_ = self.model.forward(masked_tensor)
             probs_all = normalize_probabilities(logits, temperature=self.temperature)
 
-        # 5. Entropy encode the original tokens at masked positions
         encoder = constriction.stream.queue.RangeEncoder()
         for i in range(L):
             if i not in keep_positions:
@@ -327,7 +286,7 @@ class Engine:
                 true_token = tokens[i]
                 encoder.encode(true_token, model)
 
-        compressed_array = encoder.get_compressed()  # np.ndarray of uint32
+        compressed_array = encoder.get_compressed()
         return compressed_array, kept_tokens_list, L
 
     def _decompress_chunk(
@@ -338,12 +297,9 @@ class Engine:
     ) -> str:
         """
         Decompress a single chunk.
-        The reconstruction uses the same masked sequence as during compression
-        and performs a single forward pass through the model.
         """
         L = token_count
 
-        # 1. Reconstruct the positions that were kept during compression
         keep_positions = set()
         keep_positions.add(0)
         if L > 1:
@@ -352,7 +308,6 @@ class Engine:
             if i % self.keep_every == 0:
                 keep_positions.add(i)
 
-        # 2. Build the initial masked sequence using the kept tokens
         masked_tokens = [self.mask_token_id] * L
         kept_idx = 0
         for i in range(L):
@@ -360,13 +315,11 @@ class Engine:
                 masked_tokens[i] = kept_tokens[kept_idx]
                 kept_idx += 1
 
-        # 3. Single forward pass to obtain exactly the same distributions
         masked_tensor = torch.tensor(masked_tokens, dtype=torch.long).unsqueeze(0)
         with torch.no_grad():
-            logits = self.model.forward(masked_tensor)
+            logits, _ = self.model.forward(masked_tensor)
             probs_all = normalize_probabilities(logits, temperature=self.temperature)
 
-        # 4. Decode masked tokens in the exact same order as they were encoded
         decoder = constriction.stream.queue.RangeDecoder(compressed_array)
         reconstructed_tokens = masked_tokens[:]
         for i in range(L):
@@ -376,7 +329,6 @@ class Engine:
                 sym = decoder.decode(model)
                 reconstructed_tokens[i] = sym
 
-        # 5. Convert token IDs back to hex string
         return self.tokenizer.decode(reconstructed_tokens)
 
     # ----------------------------------------------------------------------
@@ -389,7 +341,6 @@ class Engine:
         """
         raw_bytes = bytes.fromhex(hex_string)
 
-        # Split into chunks
         chunks = [
             raw_bytes[i:i + self.chunk_size]
             for i in range(0, len(raw_bytes), self.chunk_size)
@@ -397,24 +348,25 @@ class Engine:
         num_chunks = len(chunks)
 
         output_buffer = bytearray()
-        output_buffer.extend(struct.pack('<I', num_chunks))  # total number of chunks
+        output_buffer.extend(struct.pack('<I', num_chunks))
 
-        # Process in groups of lora_per_chanks
         for group_start in tqdm(range(0, num_chunks, self.lora_per_chanks)):
             group_end = min(group_start + self.lora_per_chanks, num_chunks)
             group_chunks = chunks[group_start:group_end]
 
-            # Reset LoRA to base state before fine‑tuning on this group
-            self._reset_lora_to_base()
+            # Если дообучение включено — обучаемся на группе и сохраняем веса
+            if self.enable_lora_finetune:
+                self._reset_lora_to_base()
+                adapted_lora_state = self._finetune_on_chunks(group_chunks)
+                lora_bytes = self._serialize_lora_state(adapted_lora_state)
+            else:
+                # Без дообучения пишем пустой блок LoRA (длина 0)
+                lora_bytes = b''
 
-            # Fine‑tune LoRA on this group
-            adapted_lora_state = self._finetune_on_chunks(group_chunks)
-            # Serialize and write LoRA state for this group
-            lora_bytes = self._serialize_lora_state(adapted_lora_state)
             output_buffer.extend(struct.pack('<I', len(lora_bytes)))
             output_buffer.extend(lora_bytes)
 
-            # Compress each chunk in the group using the adapted model
+            # Сжатие каждого чанка в группе
             for chunk in group_chunks:
                 hex_chunk = chunk.hex()
                 compressed_array, kept_tokens, token_count = self._compress_chunk(hex_chunk)
@@ -425,7 +377,6 @@ class Engine:
                 kept_tokens_len = len(kept_tokens)
                 compressed_byte_len = len(compressed_bytes)
 
-                # Write chunk header
                 output_buffer.extend(struct.pack(
                     '<IIII',
                     original_byte_len,
@@ -434,14 +385,11 @@ class Engine:
                     compressed_byte_len
                 ))
 
-                # Write kept tokens (uint16)
                 for token in kept_tokens:
                     output_buffer.extend(struct.pack('<H', token))
 
-                # Write compressed data
                 output_buffer.extend(compressed_bytes)
 
-        # Restore base LoRA state after compression (cleanup)
         self._reset_lora_to_base()
         return output_buffer.hex()
 
@@ -459,30 +407,33 @@ class Engine:
         chunks_processed = 0
 
         while chunks_processed < num_chunks:
-            # Read LoRA state length and data for this group
+            # Читаем длину LoRA блока
             lora_len = struct.unpack_from('<I', buffer, offset)[0]
             offset += 4
-            lora_bytes = buffer[offset:offset + lora_len]
-            offset += lora_len
 
-            # Deserialize and apply LoRA state
-            lora_state = self._deserialize_lora_state(lora_bytes)
-            fixed_state_dict = {}
-            for key, value in lora_state.items():
-                if 'lora_A' in key and value.dim() == 1:
-                    # Предполагаем, что ранг r = 4 (из сообщения об ошибке)
-                    r = 4
-                    in_features = value.numel() // r
-                    fixed_state_dict[key] = value.view(r, in_features)
-                elif 'lora_B' in key and value.dim() == 1:
-                    r = 4
-                    out_features = value.numel() // r
-                    fixed_state_dict[key] = value.view(out_features, r)
-                else:
-                    fixed_state_dict[key] = value
-            self._set_lora_state_dict(fixed_state_dict)
+            if lora_len > 0:
+                lora_bytes = buffer[offset:offset + lora_len]
+                offset += lora_len
+                lora_state = self._deserialize_lora_state(lora_bytes)
 
-            # Determine how many chunks in this group
+                # Исправляем форму тензоров (если они были сохранены как 1D)
+                fixed_state_dict = {}
+                for key, value in lora_state.items():
+                    if 'lora_A' in key and value.dim() == 1:
+                        r = 4  # предполагаемый ранг
+                        in_features = value.numel() // r
+                        fixed_state_dict[key] = value.view(r, in_features)
+                    elif 'lora_B' in key and value.dim() == 1:
+                        r = 4
+                        out_features = value.numel() // r
+                        fixed_state_dict[key] = value.view(out_features, r)
+                    else:
+                        fixed_state_dict[key] = value
+                self._set_lora_state_dict(fixed_state_dict)
+            else:
+                # LoRA не использовалась — оставляем модель как есть
+                pass
+
             group_size = min(self.lora_per_chanks, num_chunks - chunks_processed)
 
             for _ in range(group_size):
@@ -490,19 +441,16 @@ class Engine:
                     struct.unpack_from('<IIII', buffer, offset)
                 offset += 16
 
-                # Read kept tokens
                 kept_tokens = []
                 for _ in range(kept_tokens_len):
                     token = struct.unpack_from('<H', buffer, offset)[0]
                     kept_tokens.append(token)
                     offset += 2
 
-                # Read compressed data
                 compressed_bytes = buffer[offset:offset + compressed_byte_len]
                 offset += compressed_byte_len
                 compressed_array = np.frombuffer(compressed_bytes, dtype='<u4')
 
-                # Decompress chunk
                 hex_chunk = self._decompress_chunk(
                     compressed_array,
                     kept_tokens,
@@ -513,6 +461,5 @@ class Engine:
                 result_bytes.extend(chunk_bytes)
                 chunks_processed += 1
 
-        # Restore base LoRA state after decompression
         self._reset_lora_to_base()
         return result_bytes.hex()
