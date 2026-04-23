@@ -7,26 +7,27 @@ from model import FileFormer, ByteLevelTokenizer
 from dataset import MultiFileDataset
 from training import train_one_epoch
 
+torch.backends.cuda.enable_flash_sdp(True)
 tokenizer = ByteLevelTokenizer()
 
 VOCAB_SIZE = tokenizer.vocab_size
-EMBED_SIZE = 256
-SEQ_LEN = 8096
+EMBED_SIZE = 512
+SEQ_LEN = 4000
 VAL_LEN = int(SEQ_LEN/2)
-N_HEADS = 4
-N_EXPERTS = 8
-TOP_K = 2
-N_LAYERS = 6
-DROP_RATE = 0.15
-BATCH_SIZE = 32
+N_HEADS = 16
+N_EXPERTS = 4
+TOP_K = 1
+N_LAYERS = 8
+DROP_RATE = 0.2
+BATCH_SIZE = 2
 EPOCHS = 10
-LR = 3e-5
+LR = 3e-4
 CLIP_GRAD_NORM = 10.0
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-SAVE_DIR = "root/FileFormer/checkpoints/"
+SAVE_DIR = "/home/daniil/FileFormer/checkpoints/"
 
-train_dataset = MultiFileDataset(data_dir="root/FileFormer/data/raw/", seq_len=SEQ_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".i"))
-val_dataset = MultiFileDataset(data_dir="root/FileFormer/data/raw/", seq_len=VAL_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".j"))
+train_dataset = MultiFileDataset(data_dir="/home/daniil/FileFormer/data/raw/", seq_len=SEQ_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".train"))
+val_dataset = MultiFileDataset(data_dir="/home/daniil/FileFormer/data/raw/", seq_len=VAL_LEN, mask_prob=DROP_RATE, cache_dir="../data/.cache", extensions=(".val"))
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
 val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
@@ -46,7 +47,12 @@ model = FileFormer(
     ).to(DEVICE)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
-loss_fn = nn.CrossEntropyLoss(ignore_index=1)  # игнорируем pad_token_id
+total_params = sum(p.numel() for p in model.parameters())
+print(total_params)
+loss_fn = nn.CrossEntropyLoss(ignore_index=-100)  # игнорируем pad_token_id
+
+model.load_state_dict(torch.load('/home/daniil/FileFormer/checkpoints/model_epoch_10.pt', map_location=DEVICE)['model_state_dict'])
+optimizer.load_state_dict(torch.load('/home/daniil/FileFormer/checkpoints/model_epoch_10.pt', map_location=DEVICE)['optimizer_state_dict'])
 
 def main(
         model,

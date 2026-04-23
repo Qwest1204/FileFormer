@@ -34,6 +34,7 @@ def train_one_epoch(
     """
     model.train()
     train_loss_accumulator = 0.0
+    train_pp = 0.0
 
     # --------------------- Цикл обучения ---------------------
     train_progress = tqdm(
@@ -43,8 +44,8 @@ def train_one_epoch(
         leave=False,
     )
     for target, source in train_progress:
-        target = target.to(device, non_blocking=True)
-        source = source.to(device, non_blocking=True)
+        target = torch.tensor(target, dtype=torch.long).to(device, non_blocking=True)
+        source = torch.tensor(source, dtype=torch.long).to(device, non_blocking=True)
 
         optimizer.zero_grad(set_to_none=True)
 
@@ -61,17 +62,20 @@ def train_one_epoch(
 
         # Накопление потерь для статистики
         train_loss_accumulator += loss.item()
-        train_progress.set_postfix({"loss": f"{loss.item():.4f}"})
+        pp = torch.exp(loss)
+        train_pp += pp.item()
+        train_progress.set_postfix({"loss": f"{loss.item():.4f}", "PP": f"{pp.item():.4f}"})
 
     avg_train_loss = train_loss_accumulator / len(train_dataloader)
-    print(f"Epoch {epoch:3d} | Train Loss: {avg_train_loss:.4f}")
+    avg_pp = train_pp/len(train_dataloader)
+    print(f"Epoch {epoch:3d} | Train Loss: {avg_train_loss:.4f} | PP: {avg_pp:.4f} ")
 
     # --------------------- Цикл валидации ---------------------
     avg_val_loss = 0.0
     if val_dataloader is not None:
         model.eval()
         val_loss_accumulator = 0.0
-
+        val_pp = 0.0
         val_progress = tqdm(
             val_dataloader,
             desc=f"Epoch {epoch} [Val]  ",
@@ -86,8 +90,9 @@ def train_one_epoch(
                 loss = loss_fn(logits.view(-1, logits.size(-1)), target.view(-1)) + 0.001 * aux
                 val_loss_accumulator += loss.item()
                 val_progress.set_postfix({"loss": f"{loss.item():.4f}"})
-
+                val_pp += torch.exp(loss).item()
         avg_val_loss = val_loss_accumulator / len(val_dataloader)
-        print(f"Epoch {epoch:3d} | Val Loss:   {avg_val_loss:.4f}")
+        avg_pp = val_pp/len(val_dataloader)
+        print(f"Epoch {epoch:3d} | Val Loss:   {avg_val_loss:.4f} | PP:  {avg_pp:.4f}")
 
     return model, optimizer, avg_train_loss, avg_val_loss
