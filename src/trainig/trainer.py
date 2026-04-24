@@ -1,127 +1,97 @@
-import os
 import torch
-import torch.nn as nn
+from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-
-from fileformer import FileFormer
-from fileformer.file_dataset import ENWIK8Dataset
+from typing import Tuple, Optional
 
 
-def train_fileformer(
-        model: FileFormer,
-        train_dataset,
-        epochs: int = 50,
-        batch_size: int = 32,
-        lr: float = 3e-4,
-        device: str = "cuda",
-        save_dir: str = "checkpoints",
-):
-    os.makedirs(save_dir, exist_ok=True)
-    print(1)
+def train_one_epoch(
+    model: nn.Module,
+    optimizer: optim.Optimizer,
+    loss_fn: nn.Module,
+    train_dataloader: DataLoader,
+    val_dataloader: Optional[DataLoader],
+    device: torch.device,
+    epoch: int,
+    clip_grad_norm: float = 1.0,
+) -> Tuple[nn.Module, optim.Optimizer, float, float]:
+    """
+    Performs a single epoch of training (and optionally validation) with loss calculation
+    only for masked tokens.
 
-    model = model.to(device)
-    print(1)
+    Args:
+        model (nn.Module): Model to train.
+        optimizer (optim.Optimizer): Optimizer.
+        loss_fn (nn.Module): Loss function (usually CrossEntropyLoss).
+        train_dataloader (DataLoader): DataLoader returning (target, source) pairs.
+        val_dataloader (Optional[DataLoader]): DataLoader for validation.
+        device (torch.device): Device (CPU/GPU).
+        epoch (int): Current epoch number.
+        clip_grad_norm (float, optional): Maximum gradient norm.
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=0,
-        pin_memory=True
+    Returns:
+        Tuple: (model, optimizer, avg_train_loss, avg_val_loss).
+    """
+    model.train()
+    train_loss_accumulator = 0.0
+    train_pp = 0.0
+
+    train_progress = tqdm(
+        train_dataloader,
+        desc=f"Epoch {epoch} [Train]",
+        unit="batch",
+        leave=False,
     )
-    print(1)
+    for target, source in train_progress:
+        target = torch.tensor(target, dtype=torch.long).to(device, non_blocking=True)
+        source = torch.tensor(source, dtype=torch.long).to(device, non_blocking=True)
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    criterion = nn.CrossEntropyLoss(ignore_index=256)  # игнорируем pad_token_id
-    print(1)
+        optimizer.zero_grad(set_to_none=True)
 
-    for epoch in range(1, epochs + 1):
-        # ===== Training =====
-        model.train()
-        train_loss = 0.0
+        # Прямой проход
+        logits = model(source)
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} [Train]")
-        for input_ids, padding_mask, _ in pbar:
-            input_ids = input_ids.to(device)
-            padding_mask = padding_mask.to(device)
+        # Просто вычисляем потери – CrossEntropyLoss сам проигнорирует ignore_index
+        loss = loss_fn(logits.view(-1, logits.size(-1)), target.view(-1))
 
-            x = input_ids[:, :-1]
-            y = input_ids[:, 1:]
+        # Обратный проход и шаг оптимизатора
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad_norm)
+        optimizer.step()
 
-            pad_mask = padding_mask[:, 1:]
+        # Накопление потерь для статистики
+        train_loss_accumulator += loss.item()
+        pp = torch.exp(loss)
+        train_pp += pp.item()
+        train_progress.set_postfix({"loss": f"{loss.item():.4f}", "PP": f"{pp.item():.4f}"})
 
-            # Forward
-            logits = model(x, pad_mask)  # [batch, seq_len-1, vocab_size]
+    avg_train_loss = train_loss_accumulator / len(train_dataloader)
+    avg_pp = train_pp/len(train_dataloader)
+    print(f"Epoch {epoch:3d} | Train Loss: {avg_train_loss:.4f} | PP: {avg_pp:.4f} ")
 
-            # Reshape для loss
-            logits = logits.reshape(-1, logits.size(-1))  # [batch * (seq_len-1), vocab_size]
-            y = y.reshape(-1)  # [batch * (seq_len-1)]
+    # --------------------- Цикл валидации ---------------------
+    avg_val_loss = 0.0
+    if val_dataloader is not None:
+        model.eval()
+        val_loss_accumulator = 0.0
+        val_pp = 0.0
+        val_progress = tqdm(
+            val_dataloader,
+            desc=f"Epoch {epoch} [Val]  ",
+            unit="batch",
+            leave=False,
+        )
+        with torch.no_grad():
+            for target, source in val_progress:
+                target = target.to(device, non_blocking=True)
+                source = source.to(device, non_blocking=True)
+                logits = model(source)
+                loss = loss_fn(logits.view(-1, logits.size(-1)), target.view(-1))
+                val_loss_accumulator += loss.item()
+                val_progress.set_postfix({"loss": f"{loss.item():.4f}"})
+                val_pp += torch.exp(loss).item()
+        avg_val_loss = val_loss_accumulator / len(val_dataloader)
+        avg_pp = val_pp/len(val_dataloader)
+        print(f"Epoch {epoch:3d} | Val Loss:   {avg_val_loss:.4f} | PP:  {avg_pp:.4f}")
 
-            loss = criterion(logits, y)
-
-            # Backward
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-
-            train_loss += loss.item()
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
-
-        avg_train_loss = train_loss / len(train_loader)
-        # ===== Logging =====
-        log_msg = f"Epoch {epoch}: train_loss={avg_train_loss:.4f}"
-        print(log_msg)
-
-        # ===== Save checkpoint =====
-        checkpoint = {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "train_loss": avg_train_loss,
-        }
-        checkpoint_path = os.path.join(save_dir, f"model_epoch_{epoch}.pt")
-        torch.save(checkpoint, checkpoint_path)
-        print(f"Saved checkpoint: {checkpoint_path}")
-
-    return model
-
-
-# ===== Пример использования =====
-if __name__ == "__main__":
-    VOCAB_SIZE = 257
-    EMBED_SIZE = 256
-    MAX_SEQ_LEN = 16828
-    N_HEADS = 4
-    N_LAYERS = 6
-    DROP_RATE = 0.0
-    print(1)
-    # Датасет
-    train_dataset = ENWIK8Dataset(
-        file_path="/Users/daniilogorodnikov/PycharmProjects/Notus/enwik8",
-        seq_len=MAX_SEQ_LEN,
-        overlap=0,
-        cache_dir="/Users/daniilogorodnikov/PycharmProjects/Notus/cache"
-    )
-    print(1)
-    # Модель
-    model = FileFormer(
-        vocab_size=VOCAB_SIZE,
-        embed_size=EMBED_SIZE,
-        max_seq_len=MAX_SEQ_LEN,
-        n_heads=N_HEADS,
-        n_layers=N_LAYERS,
-        drop_rate=DROP_RATE
-    )
-
-    # Обучение
-    train_fileformer(
-        model=model,
-        train_dataset=train_dataset,
-        epochs=10,
-        batch_size=2,
-        lr=3e-4,
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        save_dir="checkpoints"
-    )
+    return model, optimizer, avg_train_loss, avg_val_loss

@@ -1,82 +1,83 @@
 import os
-import torch
+import numpy as np
 from torch.utils.data import Dataset
-from safetensors.torch import save_file
-from safetensors import safe_open
-import hashlib
-from fileformer.tokenizer import ByteLevelTokenizer
+from pathlib import Path
+import torch
+from typing import List, Optional, Union
+from tokenizer import ByteLevelTokenizer
 
-class FileDataset(Dataset):
-    def __init__(self, file_path: str, cache_dir: str = None):
-        pass
+class MultiFileDataset(Dataset):
+    """
+    Датасет для GPT-обучения на текстах/бинарных файлах с байтовым токенизатором.
 
-class ENWIK8Dataset(Dataset):
-    def __init__(self, file_path: str, seq_len: int, overlap: int, cache_dir=None, force_rebuild=False):
-        self.tokenizer = ByteLevelTokenizer()
+    Параметры
+    ----------
+    folder_path : str or Path
+        Путь к корневой папке с данными.
+    extensions : List[str]
+        Список расширений файлов (например, ['.txt', '.py']) без точки.
+    seq_len : int
+        Длина одной последовательности в токенах (без учёта сдвига).
+    cache_path : str or Path
+        Путь к файлу .npy для сохранения/загрузки обработанных данных.
+    tokenizer : ByteLevelTokenizer, optional
+        Экземпляр токенизатора. Если не передан, создаётся стандартный.
+    """
+    def __init__(
+        self,
+        folder_path: Union[str, Path],
+        extensions: List[str],
+        seq_len: int,
+        cache_path: Union[str, Path],
+        tokenizer: Optional['ByteLevelTokenizer'] = None
+    ):
         self.seq_len = seq_len
-        self.overlap = overlap
-        self.stride = seq_len - overlap
+        self.cache_path = Path(cache_path)
+        self.tokenizer = tokenizer or ByteLevelTokenizer()
 
-        if self.stride <= 0:
-            raise ValueError("overlap должно быть меньше seq_len")
-
-        if cache_dir is None:
-            cache_dir = os.path.dirname(file_path)
-        os.makedirs(cache_dir, exist_ok=True)
-
-        params = f"{os.path.basename(file_path)}_{seq_len}_{overlap}_{os.path.getsize(file_path)}"
-        hash_id = hashlib.md5(params.encode()).hexdigest()
-
-        self.cache_path = os.path.join(cache_dir, f"hexds_{hash_id}.safetensors")
-
-        if not force_rebuild and os.path.exists(self.cache_path):
-            self.safetensors = safe_open(self.cache_path, framework="pt", device="cpu")
-            self.num_samples = len([k for k in self.safetensors.keys() if k.startswith("input_ids_")])
+        # Если кэш существует – загружаем, иначе создаём
+        if self.cache_path.exists():
+            self.data = np.load(str(self.cache_path), mmap_mode='r')
         else:
-            self._build_cache(file_path)
+            self.data = self._build_cache(folder_path, extensions)
+            np.save(str(self.cache_path), self.data)
+            # Открываем для чтения с memory-mapping
+            self.data = np.load(str(self.cache_path), mmap_mode='r')
 
-    def _build_cache(self, file_path):
-        with open(file_path, 'rb') as f:
-            byte_data = f.read()
-        hex_str = byte_data.hex()
-        full_tokens = self.tokenizer.encode(hex_str)
+    def _build_cache(self, folder_path: Union[str, Path], extensions: List[str]) -> np.ndarray:
+        """Обход папки, токенизация, объединение и нарезка на блоки (seq_len + 1)."""
+        folder = Path(folder_path)
+        all_files = []
+        for ext in extensions:
+            all_files.extend(folder.rglob(f'*.{ext}'))
+        if not all_files:
+            raise FileNotFoundError(f'Нет файлов с расширениями {extensions} в {folder}')
 
-        samples = []
-        masks = []
-        total_len = len(full_tokens)
-        start = 0
+        # Токенизируем все файлы и конкатенируем токены
+        all_tokens = []
+        for file_path in sorted(all_files):
+            with open(file_path, 'rb') as f:
+                raw_bytes = f.read()
+            hex_str = raw_bytes.hex()          # преобразуем байты в hex-строку
+            tokens = self.tokenizer.encode(hex_str)
+            all_tokens.extend(tokens)
 
-        while start + self.seq_len <= total_len:
-            chunk = full_tokens[start:start + self.seq_len]
-            samples.append(chunk)
-            masks.append(torch.zeros(self.seq_len, dtype=torch.long))
-            start += self.stride
+        if len(all_tokens) == 0:
+            raise ValueError('После токенизации не получено ни одного токена')
 
-        if start < total_len:
-            chunk = full_tokens[start:]
-            pad_len = self.seq_len - len(chunk)
-            chunk += [self.tokenizer.encode("<pad>")[0]] * pad_len
-            last_mask = torch.zeros(self.seq_len, dtype=torch.long)
-            last_mask[-pad_len:] = 1
-            masks.append(last_mask)
-            samples.append(chunk)
+        # Нарезка на непересекающиеся блоки размера seq_len + 1.
+        # Каждый блок даёт src = block[:-1], tgt = block[1:]
+        block_size = self.seq_len + 1
+        num_blocks = len(all_tokens) // block_size
+        usable_tokens = all_tokens[:num_blocks * block_size]
+        blocks = np.array(usable_tokens, dtype=np.int32).reshape(num_blocks, block_size)
+        return blocks
 
-        tensor_dict = {}
-        for i, seq in enumerate(samples):
-            tensor_dict[f"input_ids_{i}"] = torch.tensor(seq, dtype=torch.long)
-            tensor_dict[f"attention_mask_{i}"] = masks[i]
+    def __len__(self) -> int:
+        return len(self.data)
 
-        self.num_samples = len(samples)
-        save_file(tensor_dict, self.cache_path)
-        self.safetensors = safe_open(self.cache_path, framework="pt", device="cpu")
-
-        del full_tokens, samples, tensor_dict
-
-    def __len__(self):
-        return self.num_samples
-
-    def __getitem__(self, idx):
-        input_ids = self.safetensors.get_tensor(f"input_ids_{idx}")
-        attention_mask = self.safetensors.get_tensor(f"attention_mask_{idx}")
-        causal_mask = torch.tril(torch.ones(self.seq_len, self.seq_len))
-        return input_ids, attention_mask, causal_mask
+    def __getitem__(self, idx: int):
+        block = self.data[idx]                # массив длиной seq_len + 1
+        src = torch.tensor(block[:-1].astype(np.int64), dtype=torch.long)   # int64 для PyTorch
+        tgt = torch.tensor(block[1:].astype(np.int64), dtype=torch.long)
+        return src, tgt
