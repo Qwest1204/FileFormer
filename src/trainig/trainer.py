@@ -13,7 +13,6 @@ def train_one_epoch(
     val_dataloader: Optional[DataLoader],
     device: torch.device,
     epoch: int,
-    clip_grad_norm: float = 1.0,
 ) -> Tuple[nn.Module, optim.Optimizer, float, float]:
     """
     Performs a single epoch of training (and optionally validation) with loss calculation
@@ -35,7 +34,7 @@ def train_one_epoch(
     model.train()
     train_loss_accumulator = 0.0
     train_pp = 0.0
-
+    step=0
     train_progress = tqdm(
         train_dataloader,
         desc=f"Epoch {epoch} [Train]",
@@ -43,6 +42,7 @@ def train_one_epoch(
         leave=False,
     )
     for target, source in train_progress:
+        step=step+1
         target = torch.tensor(target, dtype=torch.long).to(device, non_blocking=True)
         source = torch.tensor(source, dtype=torch.long).to(device, non_blocking=True)
 
@@ -56,14 +56,13 @@ def train_one_epoch(
 
         # Обратный проход и шаг оптимизатора
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=clip_grad_norm)
         optimizer.step()
 
         # Накопление потерь для статистики
         train_loss_accumulator += loss.item()
         pp = torch.exp(loss)
         train_pp += pp.item()
-        train_progress.set_postfix({"loss": f"{loss.item():.4f}", "PP": f"{pp.item():.4f}"})
+        train_progress.set_postfix({"loss": f"{(loss.item()/step):.4f}", "PP": f"{pp.item():.4f}"})
 
     avg_train_loss = train_loss_accumulator / len(train_dataloader)
     avg_pp = train_pp/len(train_dataloader)

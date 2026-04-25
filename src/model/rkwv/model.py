@@ -5,13 +5,14 @@ import os, math, torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.cpp_extension import load
+from .miss import MiSSLinear
 
 ##############################################################################
 # 0. Global settings and loading the WKV6 CUDA kernel
 ##############################################################################
 HEAD_SIZE = 64
 HEAD_DIVISOR = float(os.environ.get("RWKV_HEAD_SIZE_DIVISOR", 8))
-CTXLEN = int(os.environ.get("RWKV_CTXLEN", 512))
+CTXLEN = 2048
 
 flags = [
     "-res-usage", "--use_fast_math", "-O3", "-Xptxas -O3",
@@ -20,10 +21,30 @@ flags = [
 ]
 wkv6 = load(
     name="wkv6",
-    sources=[f"src/model/cuda/wkv6_op.cpp", f"src/model/cuda/wkv6_cuda.cu"],
+    sources=[f"../src/model/cuda/wkv6_op.cpp", f"../src/model/cuda/wkv6_cuda.cu"],
     verbose=False, extra_cuda_cflags=flags, is_python_module=False
 )
 
+
+def apply_miss_to_model(model, miss_shard_size=16):
+
+    for block in model.blocks:
+        att = block.att   # RWKV_Tmix_x060
+        ffn = block.ffn   # RWKV_CMix_x060
+
+        att.receptance = MiSSLinear(att.receptance, shard_size=miss_shard_size)
+        att.key        = MiSSLinear(att.key,        shard_size=miss_shard_size)
+        att.value      = MiSSLinear(att.value,      shard_size=miss_shard_size)
+        att.output     = MiSSLinear(att.output,     shard_size=miss_shard_size)
+        att.gate       = MiSSLinear(att.gate,       shard_size=miss_shard_size)
+        ffn.key        = MiSSLinear(ffn.key,        shard_size=miss_shard_size)
+        ffn.value      = MiSSLinear(ffn.value,      shard_size=miss_shard_size)
+        ffn.receptance = MiSSLinear(ffn.receptance, shard_size=miss_shard_size)
+
+    for name, param in model.named_parameters():
+        param.requires_grad = False
+        if 'shard' in name:
+            param.requires_grad = True
 
 class WKV_6(torch.autograd.Function):
     @staticmethod
@@ -103,10 +124,17 @@ class RWKV_Tmix_x060(nn.Module):
         self.time_shift = nn.ZeroPad2d((0, 0, 1, -1))
 
         self.receptance = nn.Linear(C, args.dim_att, bias=False)
-        self.key = nn.Linear(C, args.dim_att, bias=False)
-        self.value = nn.Linear(C, args.dim_att, bias=False)
-        self.output = nn.Linear(args.dim_att, C, bias=False)
-        self.gate = nn.Linear(C, args.dim_att, bias=False)
+        self.key        = nn.Linear(C, args.dim_att, bias=False)
+        self.value      = nn.Linear(C, args.dim_att, bias=False)
+        self.output     = nn.Linear(args.dim_att, C, bias=False)
+        self.gate       = nn.Linear(C, args.dim_att, bias=False)
+
+        if args.use_miss:   # аналогично
+            self.receptance = MiSSLinear(self.receptance, shard_size=16)
+            self.key        = MiSSLinear(self.key,        shard_size=16)
+            self.value      = MiSSLinear(self.value,      shard_size=16)
+            self.output     = MiSSLinear(self.output,     shard_size=16)
+            self.gate       = MiSSLinear(self.gate,       shard_size=16)
 
         self.ln_x = nn.GroupNorm(H, args.dim_att, eps=1e-5 * (HEAD_DIVISOR ** 2))
 
@@ -218,9 +246,14 @@ class RWKV_CMix_x060(nn.Module):
             self.time_maa_k = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
             self.time_maa_r = nn.Parameter(1.0 - torch.pow(ddd, ratio_1_to_almost0))
 
-        self.key = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
+        self.key        = nn.Linear(args.n_embd, args.dim_ffn, bias=False)
+        self.value      = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
         self.receptance = nn.Linear(args.n_embd, args.n_embd, bias=False)
-        self.value = nn.Linear(args.dim_ffn, args.n_embd, bias=False)
+
+        if args.use_miss:
+            self.key        = MiSSLinear(self.key,        shard_size=16)
+            self.value      = MiSSLinear(self.value,      shard_size=16)
+            self.receptance = MiSSLinear(self.receptance, shard_size=16)
 
         # save n_embd to create the correct state
         self.n_embd = args.n_embd
