@@ -13,136 +13,185 @@
 #  ║                     ~ Puritas Codicis ~                          ║
 #  ╚══════════════════════════════════════════════════════════════════╝
 
-from model import FileFormer, ByteLevelTokenizer
+import struct
+import numpy as np
 import torch
 import constriction
-import numpy as np
-import struct
+from model import FileRWKV
+from tokenizer import ByteLevelTokenizer
 from utils.utils import normalize_probabilities
+
+import tqdm
 
 
 class Engine:
     """
-    Engine for compression and decompression using a learned model.
-    Input and output are hex strings. The input file is split into chunks
-    of size `chunk_size` bytes, each chunk is compressed separately.
-    The resulting compressed hex string contains a header with chunk metadata.
+    Compression / decompression engine using a FileRWKV model.
+    Handles chunked byte‑level compression without a special start token.
     """
 
-    def __init__(self, seed: int, model: FileFormer, tokenizer: ByteLevelTokenizer, chunk_size: int = 1024):
+    def __init__(self, seed: int, nn_model: FileRWKV, tokenizer: ByteLevelTokenizer, chunk_size: int = 2048,
+                 scale_factor: int = 24):
         torch.manual_seed(seed)
         np.random.seed(seed)
-        self.model = model
+        self.model = nn_model
         self.tokenizer = tokenizer
         self.chunk_size = chunk_size
         self.model.eval()
 
-    def _compress(self, data: str):
-        """
-        Compress a single hex string chunk.
-        Returns:
-            compressed_array: np.ndarray of uint32 (compressed data)
-            token_count: number of tokens encoded
-        """
-        # Tokenize the hex string input
-        tokens = self.tokenizer.encode(data)
-        _tgt = torch.tensor(tokens, dtype=torch.long)
-        token_count = len(_tgt)
+        self.vocab_size = tokenizer.vocab_size
+        # Fixed scale for integer frequencies (2^24 guarantees that even the smallest
+        # probability ~1e-7 becomes >= 1 after scaling).
+        self.SCALE = 2 ** scale_factor
 
-        message_encoder = constriction.stream.queue.RangeEncoder()
-        # Start-of-sequence token (assumed to be 62)
-        context = torch.tensor([62], dtype=torch.long)
+    def _uniform_frequencies(self) -> np.ndarray:
+        """Return integer frequencies for a uniform distribution over vocab_size."""
+        base = self.SCALE // self.vocab_size
+        remainder = self.SCALE - base * self.vocab_size
+        freqs = np.full(self.vocab_size, base, dtype=np.int32)
+        freqs[:remainder] += 1  # distribute the excess
+        return freqs
 
-        for i in range(token_count):
+    @staticmethod
+    def _probabilities_to_frequencies(probs: np.ndarray, scale: int) -> np.ndarray:
+        """
+        Convert float probabilities (sum == 1.0) to integer frequencies (sum == scale)
+        such that every non‑zero probability gets a frequency >= 1.
+        """
+        scaled = probs * scale
+        floored = np.floor(scaled).astype(np.int64)
+        remainder = scale - np.sum(floored)
+
+        # Distribute remainder to symbols with the largest fractional parts
+        fractions = scaled - floored
+        indices = np.argpartition(-fractions, remainder)[:remainder]
+        floored[indices] += 1
+
+        return floored.astype(np.int32)
+
+    def _compress_chunk(self, hex_chunk: str):
+        tokens = self.tokenizer.encode(hex_chunk)
+        token_count = len(tokens)
+        if token_count == 0:
+            return np.array([], dtype=np.uint32), 0
+
+        # Используем буфер для накопления символов
+        # Чем больше буфер, тем выше эффективность, но больше задержка
+        buffer_size = 64
+        symbol_buffer = []
+        # Модель для буфера может быть общей, если вероятности не меняются.
+        # Но в нашем RNN случае они меняются, поэтому мы будем кодировать буфер
+        # каждый раз, как он накопится.
+
+        encoder = constriction.stream.queue.RangeEncoder()
+        state = self.model.init_rnn_state(1)
+
+        # Обрабатываем первый токен отдельно (без модели)
+        first_token = tokens[0]
+        prev_token = torch.tensor([[first_token]], dtype=torch.long, device='cuda')
+        _, state = self.model.forward_one_step(prev_token, state)
+
+        # Начинаем накопление со второго токена
+        for i in tqdm.tqdm(range(1, token_count)):
+            current_token = tokens[i]
+            # Получаем вероятности для *текущего* токена на основе предыдущего
             with torch.no_grad():
-                logits = self.model.forward(context.unsqueeze(0))  # (1, seq_len, vocab_size)
-                probs = normalize_probabilities(logits[0, -1, :], temperature=5.0)
-            prob_np = probs.cpu().numpy().astype(np.float32)
-            model = constriction.stream.model.Categorical(prob_np, perfect=False)
+                logits, state = self.model.forward_one_step(prev_token, state)
+                probs = normalize_probabilities(logits[0, 0, :], temperature=1.0)
+            prob_np = probs.cpu().to(torch.float64).numpy().astype(np.float64)
 
-            sym = _tgt[i].item()
-            message_encoder.encode(sym, model)
+            # Создаем модель для текущего символа
+            # note: perfect=False может дать небольшой выигрыш в скорости, но perfect=True точнее
+            current_model = constriction.stream.model.Categorical(prob_np, perfect=False)
 
-            # Update context with the actual token
-            context = torch.cat([context, torch.tensor([sym])])
+            # Кодируем один символ. encode ожидает массив.
+            encoder.encode(current_token, current_model)
 
-        return message_encoder.get_compressed(), token_count
+            prev_token = torch.tensor([[current_token]], dtype=torch.long, device='cuda')
 
-    def _decompress(self, data: np.ndarray, len_tgt: int) -> str:
-        """
-        Decompress a single compressed array back to a hex string.
-        """
-        message_decoder = constriction.stream.queue.RangeDecoder(data)
-        context = torch.tensor([62], dtype=torch.long)
-        reconstructed = []
+        # После цикла, когда все символы закодированы, не забываем получить результат
+        compressed = encoder.get_compressed()
 
-        for _ in range(len_tgt):
+        # Формируем итоговый массив: [first_token, ...сжатые данные...]
+        # Обратите внимание: compressed - это массив uint32
+        full = np.concatenate([np.array([first_token], dtype=np.uint32), compressed])
+        return full, token_count
+
+    def _decompress_chunk(self, data: np.ndarray, token_count: int) -> str:
+        if token_count == 0:
+            return ""
+        if token_count == 1:
+            return self.tokenizer.decode([data[0]])
+
+        # Читаем первый токен
+        first_token = data[0]
+        # Все остальное - это сжатые данные для кодера
+        compressed_data = data[1:]
+
+        decoder = constriction.stream.queue.RangeDecoder(compressed_data)
+        state = self.model.init_rnn_state(1)
+        prev_token = torch.tensor([[first_token]], dtype=torch.long, device='cuda')
+        _, state = self.model.forward_one_step(prev_token, state)
+
+        # Запускаем цикл по всем "сжатым" символам
+        reconstructed = [first_token]
+        for _ in range(token_count - 1):
             with torch.no_grad():
-                logits = self.model.forward(context.unsqueeze(0))
-                probs = normalize_probabilities(logits[0, -1, :], temperature=5.0)
-            prob_np = probs.cpu().numpy().astype(np.float32)
-            model = constriction.stream.model.Categorical(prob_np, perfect=False)
+                logits, state = self.model.forward_one_step(prev_token, state)
+                probs = normalize_probabilities(logits[0, 0, :], temperature=1.0)
+            prob_np = probs.cpu().to(torch.float64).numpy().astype(np.float64)
+            current_model = constriction.stream.model.Categorical(prob_np, perfect=False)
 
-            sym = message_decoder.decode(model)
+            # Декодируем один символ. decode возвращает массив.
+            # Указываем, что нужно декодировать 1 символ
+            decoded_arr = decoder.decode(current_model, 1)
+            sym = decoded_arr[0]
+
             reconstructed.append(sym)
-            context = torch.cat([context, torch.tensor([sym])])
+            prev_token = torch.tensor([[sym]], dtype=torch.long, device='cuda')
 
         return self.tokenizer.decode(reconstructed)
 
+    # ------------------------------------------------------------------
+    #  Public API – same interface as the original Engine
+    # ------------------------------------------------------------------
     @staticmethod
     def prepare_data_to_save(data: np.ndarray):
-        """Legacy helper: packs compressed array with a length header."""
+        """Pack compressed array with a length header (legacy helper)."""
         header = struct.pack('<I', len(data))
         data_bytes = data.astype('<u4').tobytes()
         return header, data_bytes
 
     @staticmethod
     def read_data(data: bytes) -> np.ndarray:
-        """Legacy helper: reads a compressed array from bytes."""
+        """Read compressed array from bytes (legacy helper)."""
         return np.frombuffer(data, dtype='<u4')
 
     def compress(self, hex_string: str) -> str:
         """
         Compress a hex string representing the original file.
-        Splits the underlying bytes into chunks of size `self.chunk_size`,
-        compresses each chunk, and returns a hex string containing the
-        full compressed archive.
+        Splits into chunks of `chunk_size` bytes, compresses each,
+        returns a hex string containing the archive.
         """
-        # Convert hex string to raw bytes
         raw_bytes = bytes.fromhex(hex_string)
-
-        # Split into chunks
-        chunks = [
-            raw_bytes[i:i + self.chunk_size]
-            for i in range(0, len(raw_bytes), self.chunk_size)
-        ]
+        chunks = [raw_bytes[i:i + self.chunk_size] for i in range(0, len(raw_bytes), self.chunk_size)]
         num_chunks = len(chunks)
 
-        # Build output buffer
-        output_buffer = bytearray()
-        output_buffer.extend(struct.pack('<I', num_chunks))  # number of chunks
+        output = bytearray()
+        output.extend(struct.pack('<I', num_chunks))
 
         for chunk in chunks:
-            # Convert chunk bytes to hex string for tokenizer
             hex_chunk = chunk.hex()
-            compressed_array, token_count = self._compress(hex_chunk)
+            compressed_arr, token_count = self._compress_chunk(hex_chunk)
 
-            compressed_bytes = compressed_array.astype('<u4').tobytes()
-            original_byte_len = len(chunk)
-            compressed_byte_len = len(compressed_bytes)
+            compressed_bytes = compressed_arr.astype('<u4').tobytes()
+            orig_len = len(chunk)
+            comp_len = len(compressed_bytes)
 
-            # Write chunk metadata
-            output_buffer.extend(struct.pack(
-                '<III',
-                original_byte_len,
-                token_count,
-                compressed_byte_len
-            ))
-            # Write compressed data
-            output_buffer.extend(compressed_bytes)
+            output.extend(struct.pack('<III', orig_len, token_count, comp_len))
+            output.extend(compressed_bytes)
 
-        # Return as hex string
-        return output_buffer.hex()
+        return output.hex()
 
     def decompress(self, compressed_hex: str) -> str:
         """
@@ -152,32 +201,20 @@ class Engine:
         buffer = bytes.fromhex(compressed_hex)
         offset = 0
 
-        # Read number of chunks
         num_chunks = struct.unpack_from('<I', buffer, offset)[0]
         offset += 4
 
         result_bytes = bytearray()
 
         for _ in range(num_chunks):
-            # Read chunk metadata
-            original_byte_len, token_count, compressed_byte_len = struct.unpack_from(
-                '<III', buffer, offset
-            )
+            orig_len, token_count, comp_len = struct.unpack_from('<III', buffer, offset)
             offset += 12
+            compressed_bytes = buffer[offset:offset + comp_len]
+            offset += comp_len
 
-            # Extract compressed data for this chunk
-            compressed_bytes = buffer[offset:offset + compressed_byte_len]
-            offset += compressed_byte_len
-
-            # Convert back to uint32 array
-            compressed_array = self.read_data(compressed_bytes)
-
-            # Decompress to hex string
-            hex_chunk = self._decompress(compressed_array, token_count)
-
-            # Convert hex string to bytes and trim to original length
-            chunk_bytes = bytes.fromhex(hex_chunk)[:original_byte_len]
+            compressed_arr = self.read_data(compressed_bytes)
+            hex_chunk = self._decompress_chunk(compressed_arr, token_count)
+            chunk_bytes = bytes.fromhex(hex_chunk)[:orig_len]
             result_bytes.extend(chunk_bytes)
 
-        # Return as hex string
         return result_bytes.hex()
