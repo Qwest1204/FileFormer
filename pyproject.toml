@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "constriction>=0.4.2",
+    "ninja>=1.13.0",
     "numpy>=2.4.4",
     "pyyaml>=6.0.3",
     "safetensors>=0.7.0",
