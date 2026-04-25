@@ -14,8 +14,6 @@ class MultiFileDataset(Dataset):
     ----------
     folder_path : str or Path
         Путь к корневой папке с данными.
-    extensions : List[str]
-        Список расширений файлов (например, ['.txt', '.py']) без точки.
     seq_len : int
         Длина одной последовательности в токенах (без учёта сдвига).
     cache_path : str or Path
@@ -26,7 +24,6 @@ class MultiFileDataset(Dataset):
     def __init__(
         self,
         folder_path: Union[str, Path],
-        extensions: List[str],
         seq_len: int,
         cache_path: Union[str, Path],
         tokenizer: Optional['ByteLevelTokenizer'] = None
@@ -39,19 +36,16 @@ class MultiFileDataset(Dataset):
         if self.cache_path.exists():
             self.data = np.load(str(self.cache_path), mmap_mode='r')
         else:
-            self.data = self._build_cache(folder_path, extensions)
+            self.data = self._build_cache(folder_path)
             np.save(str(self.cache_path), self.data)
             # Открываем для чтения с memory-mapping
             self.data = np.load(str(self.cache_path), mmap_mode='r')
 
-    def _build_cache(self, folder_path: Union[str, Path], extensions: List[str]) -> np.ndarray:
+    def _build_cache(self, folder_path: Union[str, Path]) -> np.ndarray:
         """Обход папки, токенизация, объединение и нарезка на блоки (seq_len + 1)."""
         folder = Path(folder_path)
         all_files = []
-        for ext in extensions:
-            all_files.extend(folder.rglob(f'*.{ext}'))
-        if not all_files:
-            raise FileNotFoundError(f'Нет файлов с расширениями {extensions} в {folder}')
+        all_files.extend(folder.rglob(f'*'))
 
         # Токенизируем все файлы и конкатенируем токены
         all_tokens = []
